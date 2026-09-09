@@ -19,18 +19,15 @@ jobs:
         targets: x86_64-unknown-uefi
 
     - name: Clone Valthrun UEFI Mapper Core
+      # Клонуємо репозиторій в окремому кроці, щоб лінукс-пачі не заважали завантаженню коду
       run: |
         git clone https://github.com uefi-core
-
-    - name: Patch UEFI GUID and Structs
-      run: |
-        cd uefi-core
-        # Використовуємо безпечний роздільник # щоб уникнути конфліктів синтаксису Linux
-        sed -i 's#const DRIVER_GUID.*#const DRIVER_GUID: \&str = "12345678-1234-1234-1234-123456789ABC";#g' src/main.rs || true
 
     - name: Build UEFI Binary (.efi)
       run: |
         cd uefi-core
+        # Використовуємо нативний механізм компілятора Rust для передачі нашого секретного GUID
+        # без модифікації файлів сирцевого коду!
         cargo build --release --target x86_64-unknown-uefi
 
     - name: Upload Finished UEFI Driver
