@@ -1,0 +1,41 @@
+name: Build UEFI BIOS Driver
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Кнопка для ручного запуску
+
+jobs:
+  build-uefi:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout EDK2-Rust Build Tools
+      uses: actions/checkout@v4
+
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-uefi
+
+    - name: Clone Valthrun UEFI Mapper Core
+      run: |
+        git clone https://github.com uefi-core
+
+    - name: Patch UEFI GUID and Structs
+      run: |
+        cd uefi-core
+        # Прописуємо в лоадер наш унікальний GUID, який ми забили в клієнт: {12345678-1234-1234-1234-123456789ABC}
+        # Також конфігуруємо ідентифікатори команд для читання (1) та модулів (2)
+        sed -i 's/const DRIVER_GUID.*/const DRIVER_GUID: \&str = "12345678-1234-1234-1234-123456789ABC";/g' src/main.rs || true
+
+    - name: Build UEFI Binary (.efi)
+      run: |
+        cd uefi-core
+        cargo build --release --target x86_64-unknown-uefi
+
+    - name: Upload Finished UEFI Driver
+      uses: actions/upload-artifact@v4
+      with:
+        name: UEFI-BIOS-Driver-Efi
+        path: uefi-core/target/x86_64-unknown-uefi/release/valthrun_uefi_mapper.efi
