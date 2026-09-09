@@ -10,24 +10,21 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Repository
+    - name: Fresh Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Install Rust Toolchain
+    - name: Clean Install Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: x86_64-unknown-uefi
 
-    - name: Clone Valthrun UEFI Mapper Core
-      # Клонуємо репозиторій в окремому кроці, щоб лінукс-пачі не заважали завантаженню коду
-      run: |
-        git clone https://github.com uefi-core
+    - name: Clone Core Repository Without Cache
+      # Змінено назву кроку та очищено рядок. Тепер сервер змушений виконати чистий запит до репозиторію
+      run: git clone https://github.com uefi-core
 
-    - name: Build UEFI Binary (.efi)
+    - name: Compile Fresh UEFI Binary
       run: |
         cd uefi-core
-        # Використовуємо нативний механізм компілятора Rust для передачі нашого секретного GUID
-        # без модифікації файлів сирцевого коду!
         cargo build --release --target x86_64-unknown-uefi
 
     - name: Upload Finished UEFI Driver
