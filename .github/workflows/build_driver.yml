@@ -2,33 +2,54 @@ name: Build UEFI BIOS Driver
 
 on:
   push:
-    branches: ["main", "master"]
-  workflow_dispatch:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Дозволяє запускати збірку вручну кнопкою
 
 jobs:
-  build-uefi:
+  build-uefi-driver:
     runs-on: ubuntu-22.04
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        path: source-repo
 
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-uefi
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get update || true
+        sudo apt-get install -y build-essential uuid-dev iasl nasm python3 gcc-multilib g++-multilib
 
-      - name: Clone Valthrun UEFI Mapper Core
-        run: |
-          git clone https://github.com/Valthrun/valthrun-uefi-mapper.git uefi-core
+    - name: Checkout EDK2 (Tianocore Platform)
+      uses: actions/checkout@v4
+      with:
+        repository: tianocore/edk2
+        submodules: 'true'
+        path: edk2
 
-      - name: Build UEFI Binary (.efi)
-        run: |
-          cd uefi-core
-          cargo build --release --target x86_64-unknown-uefi
+    - name: Setup EDK2 Environment & Build BaseTools
+      run: |
+        cd edk2
+        make -C BaseTools
+        . edksetup.sh
 
-      - name: Upload Finished UEFI Driver
-        uses: actions/upload-artifact@v4
-        with:
-          name: UEFI-BIOS-Driver-Efi
-          path: uefi-core/target/x86_64-unknown-uefi/release/*.efi
+    - name: Integrate UefiRuntimeBridge into EDK2
+      run: |
+        # Створюємо пакет збірки всередині EDK2 та копіюємо туди наш код
+        mkdir -p edk2/UefiRuntimeBridgePkg
+        cp -r source-repo/UefiRuntimeBridge/* edk2/UefiRuntimeBridgePkg/
+        
+        # Автоматично генеруємо файл опису пакета .dsc, який вимагає компілятор Intel
+        echo -e "[Defines]\n  PLATFORM_NAME                  = UefiRuntimeBridge\n  PLATFORM_GUID                  = 5F9D3B1C-1234-4321-A1B2-C3D4E5F6A7B8\n  PLATFORM_VERSION               = 1.0\n  DSC_VERSION                    = 0.05\n  OUTPUT_DIRECTORY               = Build/UefiRuntimeBridge\n  SUPPORTED_TOOL_CHAIN_TAGS      = GCC\n  BUILD_TARGETS                  = RELEASE\n  SKUID_IDENTIFIER               = DEFAULT\n  ARCHITECTURE                   = X64\n\n[LibraryClasses]\n  UefiDriverEntryPoint|MdePkg/Library/UefiDriverEntryPoint/UefiDriverEntryPoint.inf\n  UefiLib|MdePkg/Library/UefiLib/UefiLib.inf\n  BaseLib|MdePkg/Library/BaseLib/BaseLib.inf\n  BaseMemoryLib|MdePkg/Library/BaseMemoryLib/BaseMemoryLib.inf\n  MemoryAllocationLib|MdePkg/Library/MemoryAllocationLib/UefiMemoryAllocationLib.inf\n  PcdLib|MdePkg/Library/BasePcdLibNull/BasePcdLibNull.inf\n  PrintLib|MdePkg/Library/BasePrintLib/BasePcdPrintLib.inf\n  DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf\n  DevicePathLib|MdePkg/Library/UefiDevicePathLib/UefiDevicePathLib.inf\n  UefiBootServicesTableLib|MdePkg/Library/UefiBootServicesTableLibIntercomp/UefiBootServicesTableLib.inf\n  UefiRuntimeServicesTableLib|MdePkg/Library/UefiRuntimeServicesTableLib/UefiRuntimeServicesTableLib.inf\n\n[Components]\n  UefiRuntimeBridgePkg/UefiRuntimeBridge.inf\n\n[BuildOptions]\n  GCC:*_*_*_CC_FLAGS = -Wno-error" > edk2/UefiRuntimeBridgePkg/UefiRuntimeBridgePkg.dsc
+
+    - name: Build UEFI Driver (.efi)
+      run: |
+        cd edk2
+        . edksetup.sh
+        # Запускаємо нативний компілятор Linux під архітектуру X64
+        build -p UefiRuntimeBridgePkg/UefiRuntimeBridgePkg.dsc -a X64 -t GCC -b RELEASE
+
+    - name: Upload Finished UEFI Driver
+      uses: actions/upload-artifact@v4
+      with:
+        name: UEFI-BIOS-Driver-Efi
+        path: edk2/Build/UefiRuntimeBridge/RELEASE_GCC/X64/UefiRuntimeBridge.efi
