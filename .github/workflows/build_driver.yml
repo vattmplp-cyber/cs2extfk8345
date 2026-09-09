@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout EDK2-Rust Build Tools
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Install Rust Toolchain
@@ -25,9 +25,8 @@ jobs:
     - name: Patch UEFI GUID and Structs
       run: |
         cd uefi-core
-        # Прописуємо в лоадер наш унікальний GUID, який ми забили в клієнт: {12345678-1234-1234-1234-123456789ABC}
-        # Також конфігуруємо ідентифікатори команд для читання (1) та модулів (2)
-        sed -i 's/const DRIVER_GUID.*/const DRIVER_GUID: \&str = "12345678-1234-1234-1234-123456789ABC";/g' src/main.rs || true
+        # Використовуємо безпечний роздільник # щоб уникнути конфліктів синтаксису Linux
+        sed -i 's#const DRIVER_GUID.*#const DRIVER_GUID: \&str = "12345678-1234-1234-1234-123456789ABC";#g' src/main.rs || true
 
     - name: Build UEFI Binary (.efi)
       run: |
