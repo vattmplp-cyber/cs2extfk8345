@@ -1,0 +1,33 @@
+name: Build CS2Ext Windows Client
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Дозволяє запускати збірку вручну кнопкою
+
+jobs:
+  build-windows-client:
+    runs-on: windows-2022
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure CMake
+      # Запускаємо конфігурацію CMake для папки cs2ext, де лежить код читу
+      run: |
+        cmake -S cs2ext -B build_output -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build Executable via CMake
+      # Компілюємо фінальний Release x64 бінарник
+      run: |
+        cmake --build build_output --config Release
+
+    - name: Upload Finished Client Executable
+      uses: actions/upload-artifact@v4
+      with:
+        name: CS2Ext-UEFI-Client-Exe
+        # Шлях, куди CMake зазвичай складає готові Windows програми
+        path: build_output/Release/cs2ext.exe
