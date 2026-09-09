@@ -2,33 +2,33 @@ name: Build UEFI BIOS Driver
 
 on:
   push:
-    branches: [ "main", "master" ]
-  workflow_dispatch: # Кнопка для ручного запуску
+    branches: ["main", "master"]
+  workflow_dispatch:
 
 jobs:
   build-uefi:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Fresh Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Clean Install Rust Toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-unknown-uefi
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
 
-    - name: Clone Core Repository Without Cache
-      # Змінено назву кроку та очищено рядок. Тепер сервер змушений виконати чистий запит до репозиторію
-      run: git clone https://github.com uefi-core
+      - name: Clone Valthrun UEFI Mapper Core
+        run: |
+          git clone https://github.com/Valthrun/valthrun-uefi-mapper.git uefi-core
 
-    - name: Compile Fresh UEFI Binary
-      run: |
-        cd uefi-core
-        cargo build --release --target x86_64-unknown-uefi
+      - name: Build UEFI Binary (.efi)
+        run: |
+          cd uefi-core
+          cargo build --release --target x86_64-unknown-uefi
 
-    - name: Upload Finished UEFI Driver
-      uses: actions/upload-artifact@v4
-      with:
-        name: UEFI-BIOS-Driver-Efi
-        path: uefi-core/target/x86_64-unknown-uefi/release/valthrun_uefi_mapper.efi
+      - name: Upload Finished UEFI Driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: UEFI-BIOS-Driver-Efi
+          path: uefi-core/target/x86_64-unknown-uefi/release/*.efi
