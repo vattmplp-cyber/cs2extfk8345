@@ -6,9 +6,9 @@
 #include <cstdio>
 #include <memory>
 #include "memory/imemory.h"
-#include "shared.h"
-#include "driver_manager.h"
-#include "memory_utils.h"
+#include "memory/shared.h"
+#include "memory/driver_manager.h"
+#include "memory/memory_utils.h"
 
 const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}"; 
 
