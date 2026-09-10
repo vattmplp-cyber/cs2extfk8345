@@ -1,3 +1,4 @@
+```cpp
 #include <Windows.h>
 #include <cstdio>
 #include <chrono>
@@ -28,6 +29,7 @@
 static const char* CONFIG_PATH = "cs2esp.ini";
 static volatile bool g_running = true;
 static bool g_driver_backend_active = false;
+static bool g_uefi_backend_active = false; // Додано прапор для UEFI
 
 static void save_and_exit() {
     Config::save(CONFIG_PATH);
@@ -46,8 +48,10 @@ static void cleanup_on_exit() {
 }
 
 static BOOL WINAPI console_handler(DWORD event) {
-    if (event == CTRL_C_EVENT || event == CTRL_CLOSE_EVENT ||
-        event == CTRL_BREAK_EVENT || event == CTRL_LOGOFF_EVENT ||
+    if (event == CTRL_C_EVENT ||
+        event == CTRL_CLOSE_EVENT ||
+        event == CTRL_BREAK_EVENT ||
+        event == CTRL_LOGOFF_EVENT ||
         event == CTRL_SHUTDOWN_EVENT)
     {
         g_aimbot_running.store(false, std::memory_order_relaxed);
@@ -59,15 +63,19 @@ static BOOL WINAPI console_handler(DWORD event) {
     return FALSE;
 }
 
-// ФІКС: Прибрано застарілі виклики full_cleanup, які ламали збірку
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ex) {
     UNREFERENCED_PARAMETER(ex);
 
     printf("\n[!] Crash detected, closing overlay...\n");
 
+    if (g_driver_backend_active) {
+        DriverManager::full_cleanup();
+    }
+
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Перелік індексів бекенду (Чітка відповідність цифрам меню)
 enum MemoryBackend {
     WinApi = 1,
     IndirectSyscall = 2,
@@ -84,10 +92,10 @@ std::unique_ptr<IMemory> CreateMemoryBackend(MemoryBackend backend) {
             return std::make_unique<MemorySyscall>();
 
         case KernelDriver:
-            return std::make_unique<MemoryDriver>(true);
+            return std::make_unique<MemoryDriver>(true);  // Режим 3 (kdmapper)
 
         case UefiRuntime:
-            return std::make_unique<MemoryDriver>(false);
+            return std::make_unique<MemoryDriver>(false); // Режим 4 (Singularity UEFI)
 
         default:
             throw std::runtime_error("invalid backend");
@@ -101,7 +109,6 @@ int main() {
     SetConsoleCtrlHandler(console_handler, TRUE);
     SetUnhandledExceptionFilter(crash_handler);
 
-    // ФІКС: Спрощено обробник виходу
     std::atexit([]() {
         stop_aimbot_thread();
     });
@@ -116,8 +123,7 @@ int main() {
         printf("  1. User-space (WinAPI)               - simplest, works everywhere\n");
         printf("  2. User-space (indirect syscalls)    - slightly stealthier\n");
         printf("  3. Kernel driver kdmapper (IOCTL)    - requires admin + setup\n");
-        printf("  4. UEFI BIOS Runtime (Valthrun)      - stealthiest, bypasses VBS & AV\n");
-
+        printf("  4. UEFI BIOS Runtime (Singularity)   - stealthiest, bypasses VBS & AV\n");
         printf("\n> ");
 
         int backend = -1;
@@ -130,8 +136,7 @@ int main() {
 
         if (backend == 3) {
             printf("\n=== Kernel driver /w kdmapper Requirements ===\n");
-            printf("  - Run as Administrator\n");
-            printf("  - Need to disable Core Isolation & Blocklist\n\nContinue? (y/n): ");
+            printf("  - Run as Administrator\nContinue? (y/n): ");
 
             char c;
             scanf_s(" %c", &c, 1);
@@ -143,22 +148,17 @@ int main() {
         g_settings.memory_backend = backend;
     }
 
-    g_driver_backend_active =
-        (g_settings.memory_backend == KernelDriver);
+    // Розділяємо логічні прапори активації системних режимів
+    g_driver_backend_active = (g_settings.memory_backend == KernelDriver);
+    g_uefi_backend_active = (g_settings.memory_backend == UefiRuntime);
 
     try {
         g_memory = CreateMemoryBackend(
-            static_cast<MemoryBackend>(
-                g_settings.memory_backend
-            )
+            static_cast<MemoryBackend>(g_settings.memory_backend)
         );
     }
     catch (const std::exception& e) {
-        printf(
-            "[-] Failed to create backend: %s\n",
-            e.what()
-        );
-
+        printf("[-] Failed to create backend: %s\n", e.what());
         CoUninitialize();
         return 1;
     }
@@ -186,23 +186,20 @@ int main() {
         (unsigned long long)g_memory->get_client_base()
     );
 
-    if (g_settings.memory_backend == UefiRuntime) {
+    if (g_uefi_backend_active) {
         printf(
-            "[+] Using UEFI BIOS RUNTIME BRIDGE for memory reads\n"
+            "[+] Using STABLE UEFI BIOS RUNTIME (Singularity) for memory reads\n"
         );
     }
     else if (g_driver_backend_active) {
-        printf(
-            "[+] Using KERNEL DRIVER for memory reads\n"
-        );
+        printf("[+] Using KERNEL DRIVER for memory reads\n");
     }
 
     if (!g_offsets.load(
             "offsets/offsets.json",
-            "offsets/client_dll.json")) {
-
+            "offsets/client_dll.json"))
+    {
         printf("[-] Failed to load offsets\n");
-
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -210,7 +207,6 @@ int main() {
 
     if (!g_overlay.init(L"Counter-Strike 2")) {
         printf("[-] Overlay failed\n");
-
         cleanup_on_exit();
         CoUninitialize();
         return 1;
@@ -218,21 +214,18 @@ int main() {
 
     if (!g_input.initialize()) {
         printf("[-] Input init failed\n");
-
         cleanup_on_exit();
         CoUninitialize();
         return 1;
     }
 
     if (g_settings.aimbot_enabled ||
-        g_settings.triggerbot_enabled) {
-
+        g_settings.triggerbot_enabled)
+    {
         start_aimbot_thread();
     }
 
-    g_weapon_icons.init(
-        g_overlay.get_device()
-    );
+    g_weapon_icons.init(g_overlay.get_device());
 
     printf(
         "[+] %s = menu | %s = master toggle | %s = exit\n",
@@ -248,43 +241,27 @@ int main() {
     bool was_aimbot_enabled = false;
     std::string last_map_name;
 
-    g_overlay.set_interactive(
-        g_settings.menu_open
-    );
+    g_overlay.set_interactive(g_settings.menu_open);
 
     while (g_running) {
         auto frame_start =
             std::chrono::high_resolution_clock::now();
 
-        if (GetAsyncKeyState(
-                g_settings.key_exit
-            ) & 1) {
+        if (GetAsyncKeyState(g_settings.key_exit) & 1)
             break;
-        }
 
-        if ((GetAsyncKeyState(
-                g_settings.key_menu
-            ) & 1) &&
-            g_overlay.is_game_window()) {
-
+        if ((GetAsyncKeyState(g_settings.key_menu) & 1) &&
+            g_overlay.is_game_window())
+        {
             g_menu.toggle();
         }
 
-        if (GetAsyncKeyState(
-                g_settings.key_master
-            ) & 1) {
-
-            g_settings.master_switch =
-                !g_settings.master_switch;
-        }
+        if (GetAsyncKeyState(g_settings.key_master) & 1)
+            g_settings.master_switch = !g_settings.master_switch;
 
         if (g_settings.menu_open != prev_menu) {
-            g_overlay.set_interactive(
-                g_settings.menu_open
-            );
-
-            prev_menu =
-                g_settings.menu_open;
+            g_overlay.set_interactive(g_settings.menu_open);
+            prev_menu = g_settings.menu_open;
         }
 
         bool want_aimbot =
@@ -292,19 +269,12 @@ int main() {
              g_settings.triggerbot_enabled) &&
             g_settings.master_switch;
 
-        if (want_aimbot &&
-            !was_aimbot_enabled) {
-
+        if (want_aimbot && !was_aimbot_enabled)
             start_aimbot_thread();
-        }
-        else if (!want_aimbot &&
-                 was_aimbot_enabled) {
-
+        else if (!want_aimbot && was_aimbot_enabled)
             stop_aimbot_thread();
-        }
 
-        was_aimbot_enabled =
-            want_aimbot;
+        was_aimbot_enabled = want_aimbot;
 
         if (!g_overlay.begin_frame())
             break;
@@ -315,12 +285,7 @@ int main() {
             static constexpr int IDLE_FPS_CAP = 20;
 
             g_overlay.end_frame(0);
-
-            limit_frame(
-                frame_start,
-                IDLE_FPS_CAP
-            );
-
+            limit_frame(frame_start, IDLE_FPS_CAP);
             continue;
         }
 
@@ -331,39 +296,26 @@ int main() {
             );
 
         if (g_settings.aimbot_enabled ||
-            g_settings.triggerbot_enabled) {
-
+            g_settings.triggerbot_enabled)
+        {
             AimbotFrame af{};
 
-            af.view_matrix =
-                state.view_matrix;
+            af.view_matrix = state.view_matrix;
 
             af.local_x = state.local.x;
             af.local_y = state.local.y;
             af.local_z = state.local.z;
 
-            af.local_team =
-                state.local.team;
+            af.local_team = state.local.team;
+            af.local_pawn = state.local.pawn;
 
-            af.local_pawn =
-                state.local.pawn;
-
-            af.screen_w =
-                g_overlay.width;
-
-            af.screen_h =
-                g_overlay.height;
+            af.screen_w = g_overlay.width;
+            af.screen_h = g_overlay.height;
 
             if (state.local.camera.valid) {
-                af.eye_origin =
-                    state.local.camera.origin;
-
-                af.view_angles =
-                    state.local.camera.angles;
-
-                af.camera_fov =
-                    state.local.camera.fov;
-
+                af.eye_origin = state.local.camera.origin;
+                af.view_angles = state.local.camera.angles;
+                af.camera_fov = state.local.camera.fov;
                 af.camera_valid = true;
             }
             else {
@@ -377,33 +329,17 @@ int main() {
                 af.camera_valid = false;
             }
 
-            for (int i = 1;
-                 i < EntityList::MAX_PLAYERS;
-                 i++) {
+            for (int i = 1; i < EntityList::MAX_PLAYERS; i++) {
+                const auto& p = state.players[i];
 
-                const auto& p =
-                    state.players[i];
+                af.targets[i].valid = p.valid;
+                af.targets[i].team = p.team;
+                af.targets[i].health = p.health;
 
-                af.targets[i].valid =
-                    p.valid;
-
-                af.targets[i].team =
-                    p.team;
-
-                af.targets[i].health =
-                    p.health;
-
-                af.targets[i].head_pos =
-                    p.head_world;
-
-                af.targets[i].neck_pos =
-                    p.neck_world;
-
-                af.targets[i].chest_pos =
-                    p.chest_world;
-
-                af.targets[i].pelvis_pos =
-                    p.pelvis_world;
+                af.targets[i].head_pos = p.head_world;
+                af.targets[i].neck_pos = p.neck_world;
+                af.targets[i].chest_pos = p.chest_world;
+                af.targets[i].pelvis_pos = p.pelvis_world;
             }
 
             g_aimbot_data.publish(af);
@@ -413,46 +349,26 @@ int main() {
             state.local.pawn != 0 &&
             !state.map_name.empty() &&
             state.map_name != "<empty>" &&
-            state.map_name != last_map_name) {
-
-            last_map_name =
-                state.map_name;
-
+            state.map_name != last_map_name)
+        {
+            last_map_name = state.map_name;
             g_bvh.clear();
             g_bvh.parse();
         }
 
-        float fwd_x =
-            state.view_matrix.m[2][0];
-
-        float fwd_y =
-            state.view_matrix.m[2][1];
-
-        float fwd_z =
-            state.view_matrix.m[2][2];
+        float fwd_x = state.view_matrix.m[2][0];
+        float fwd_y = state.view_matrix.m[2][1];
+        float fwd_z = state.view_matrix.m[2][2];
 
         float view_pitch_deg =
-            -asinf(
-                std::clamp(
-                    fwd_z,
-                    -1.0f,
-                    1.0f
-                )
-            ) *
-            180.0f /
-            3.14159265f;
+            -asinf(std::clamp(fwd_z, -1.0f, 1.0f)) *
+            180.0f / 3.14159265f;
 
         float view_yaw_deg =
-            atan2f(
-                fwd_y,
-                fwd_x
-            ) *
-            180.0f /
-            3.14159265f;
+            atan2f(fwd_y, fwd_x) *
+            180.0f / 3.14159265f;
 
-        g_grenades.set_view_matrix(
-            state.view_matrix
-        );
+        g_grenades.set_view_matrix(state.view_matrix);
 
         g_grenades.update(
             state.local.x,
@@ -463,9 +379,7 @@ int main() {
             state.map_name
         );
 
-        if (state.entity_list &&
-            ++spec_tick >= 15) {
-
+        if (state.entity_list && ++spec_tick >= 15) {
             spec_tick = 0;
 
             g_spectators.update(
@@ -478,10 +392,7 @@ int main() {
         ImDrawList* draw =
             ImGui::GetBackgroundDrawList();
 
-        for (int i = 1;
-             i < EntityList::MAX_PLAYERS;
-             i++) {
-
+        for (int i = 1; i < EntityList::MAX_PLAYERS; i++) {
             g_esp.draw_player(
                 draw,
                 state.players[i],
@@ -517,9 +428,7 @@ int main() {
             g_overlay.height
         );
 
-        g_spectators.draw(
-            g_overlay.width
-        );
+        g_spectators.draw(g_overlay.width);
 
         ImDrawList* fg =
             ImGui::GetForegroundDrawList();
@@ -575,3 +484,4 @@ int main() {
 
     return 0;
 }
+```
