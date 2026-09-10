@@ -1,4 +1,3 @@
-// memory/memory_driver.h - Повне виправлення типів MSVC для Singularity
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -29,7 +28,6 @@ public:
         if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) { CloseHandle(hToken); return false; }
         
         tp.PrivilegeCount = 1;
-        // ФІКС: Звернення до масиву через індекс [0]
         tp.Privileges[0].Luid = luid;
         tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
         
@@ -48,8 +46,8 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            // ФІКС: Явне приведення типу макросу до Юнікоду за допомогою макросу TEXT()
-            EnablePrivilege(TEXT(SE_SYSTEM_ENVIRONMENT_NAME));
+            // Пряма та безболісна передача Юнікод-рядка привілею
+            EnablePrivilege(L"SeSystemEnvironmentPrivilege");
         }
 
         pid = find_process(process_name);
@@ -91,7 +89,7 @@ public:
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив з 10 елементів
+                unsigned long long data[10];  // Повноцінний масив з 10 елементів
                 int size;                     
             };
 
@@ -104,7 +102,7 @@ public:
 
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
-            // Апаратний бар'єр для синхронізації ОЗП та i7 процесора
+            // Апаратна затримка для вирівнювання таймінгів ОЗП та процесора i7
             Sleep(0); 
 
             return true;
