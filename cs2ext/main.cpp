@@ -281,7 +281,7 @@ int main() {
 
 ImDrawList* draw = ImGui::GetBackgroundDrawList();
 for (int i = 1; i < EntityList::MAX_PLAYERS; i++) {
-    g_esp.draw_player(draw, state.players[i], g_settings.local.team, g_overlay.width, g_overlay.height, i, state.local.is_scoped);
+    g_esp.draw_player(draw, state.players[i], state.local.team, g_overlay.width, g_overlay.height, i, state.local.is_scoped);
 }
 
 g_grenades.render_popups();
