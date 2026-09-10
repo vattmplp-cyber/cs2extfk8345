@@ -1,55 +1,90 @@
-name: Build UEFI BIOS Driver
+#include <Uefi.h>
+#include <Library/UefiLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/BaseMemoryLib.h>
 
-on:
-  push:
-    branches: [ "main", "master" ]
-  workflow_dispatch: # Дозволяє запускати збірку вручну кнопкою
+// НАШ УНІКАЛЬНИЙ GUID
+#define COMPILER_UEFI_GUID \
+  { 0x12345678, 0x1234, 0x1234, { 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC } }
 
-jobs:
-  build-uefi-driver:
-    runs-on: ubuntu-22.04
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        path: source-repo
+static EFI_GUID gMyDriverGuid = COMPILER_UEFI_GUID;
+static EFI_SET_VARIABLE gOriginalSetVariable = NULL;
+static EFI_EVENT gVirtualAddressMapEvent = NULL;
 
-    - name: Install Build Dependencies
-      run: |
-        sudo apt-get update || true
-        sudo apt-get install -y build-essential uuid-dev iasl nasm python3 gcc-multilib g++-multilib
+typedef struct {
+    UINT32     command_id;      
+    UINT32     target_pid;
+    UINT64     source_address;
+    UINT64     output_buffer;
+    UINT64     read_size;
+} UEFI_READ_PACKET;
 
-    - name: Checkout EDK2 (Tianocore Platform)
-      uses: actions/checkout@v4
-      with:
-        repository: tianocore/edk2
-        submodules: 'true'
-        path: edk2
+// --- БЕЗПЕЧНИЙ ХУК З СИНХРОНІЗАЦІЄЮ АДРЕС ---
+EFI_STATUS
+EFIAPI
+MyCustomSetVariable (
+  IN  CHAR16    *VariableName,
+  IN  EFI_GUID  *VendorGuid,
+  IN  UINT32    Attributes,
+  IN  UINTN     DataSize,
+  IN  VOID      *Data
+  )
+{
+    if (VariableName == NULL || VendorGuid == NULL) {
+        return gOriginalSetVariable(VariableName, VendorGuid, Attributes, DataSize, Data);
+    }
 
-    - name: Setup EDK2 Environment & Build BaseTools
-      run: |
-        cd edk2
-        make -C BaseTools
-        . edksetup.sh
+    if (CompareGuid(VendorGuid, &gMyDriverGuid) && StrCmp(VariableName, L"UefiRead") == 0) {
+        if (Data != NULL && DataSize >= sizeof(UEFI_READ_PACKET)) {
+            UEFI_READ_PACKET *packet = (UEFI_READ_PACKET*)Data;
 
-    - name: Integrate UefiRuntimeBridge into EDK2
-      run: |
-        # Створюємо пакет збірки всередині EDK2 та копіюємо туди наш код
-        mkdir -p edk2/UefiRuntimeBridgePkg
-        cp -r source-repo/UefiRuntimeBridge/* edk2/UefiRuntimeBridgePkg/
-        
-        # ФІКС: Додано бібліотеку StackCheckLibNull для задоволення вимог UefiDriverEntryPoint у нових версіях EDK2
-        echo -e "[Defines]\n  PLATFORM_NAME                  = UefiRuntimeBridge\n  PLATFORM_GUID                  = 5F9D3B1C-1234-4321-A1B2-C3D4E5F6A7B8\n  PLATFORM_VERSION               = 1.0\n  DSC_VERSION                    = 0.05\n  OUTPUT_DIRECTORY               = Build/UefiRuntimeBridge\n  SUPPORTED_TOOL_CHAIN_TAGS      = GCC\n  BUILD_TARGETS                  = RELEASE\n  SKUID_IDENTIFIER               = DEFAULT\n  SUPPORTED_ARCHITECTURES        = X64\n\n[LibraryClasses]\n  UefiDriverEntryPoint|MdePkg/Library/UefiDriverEntryPoint/UefiDriverEntryPoint.inf\n  UefiLib|MdePkg/Library/UefiLib/UefiLib.inf\n  BaseLib|MdePkg/Library/BaseLib/BaseLib.inf\n  BaseMemoryLib|MdePkg/Library/BaseMemoryLib/BaseMemoryLib.inf\n  MemoryAllocationLib|MdePkg/Library/UefiMemoryAllocationLib/UefiMemoryAllocationLib.inf\n  PcdLib|MdePkg/Library/BasePcdLibNull/BasePcdLibNull.inf\n  PrintLib|MdePkg/Library/BasePrintLib/BasePrintLib.inf\n  DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf\n  DevicePathLib|MdePkg/Library/UefiDevicePathLib/UefiDevicePathLib.inf\n  UefiBootServicesTableLib|MdePkg/Library/UefiBootServicesTableLib/UefiBootServicesTableLib.inf\n  UefiRuntimeServicesTableLib|MdePkg/Library/UefiRuntimeServicesTableLib/UefiRuntimeServicesTableLib.inf\n  RegisterFilterLib|MdePkg/Library/RegisterFilterLibNull/RegisterFilterLibNull.inf\n  StackCheckLib|MdePkg/Library/StackCheckLibNull/StackCheckLibNull.inf\n\n[Components]\n  UefiRuntimeBridgePkg/UefiRuntimeBridge.inf\n\n[BuildOptions]\n  GCC:*_*_*_CC_FLAGS = -Wno-error" > edk2/UefiRuntimeBridgePkg/UefiRuntimeBridgePkg.dsc
+            if (packet->command_id == 1) { 
+                if (packet->output_buffer != 0 && packet->source_address != 0 && packet->read_size > 0) {
+                    CopyMem((VOID*)(packet->output_buffer), (VOID*)(packet->source_address), (UINTN)packet->read_size);
+                    return EFI_SUCCESS;
+                }
+            }
+        }
+    }
 
-    - name: Build UEFI Driver (.efi)
-      run: |
-        cd edk2
-        . edksetup.sh
-        # Запускаємо компілятор під архітектуру X64
-        build -p UefiRuntimeBridgePkg/UefiRuntimeBridgePkg.dsc -a X64 -t GCC -b RELEASE
+    return gOriginalSetVariable(VariableName, VendorGuid, Attributes, DataSize, Data);
+}
 
-    - name: Upload Finished UEFI Driver
-      uses: actions/upload-artifact@v4
-      with:
-        name: UEFI-BIOS-Driver-Efi
-        path: edk2/Build/UefiRuntimeBridge/RELEASE_GCC/X64/UefiRuntimeBridge.efi
+// --- ФУНКЦІЯ ПЕРЕХОДУ НА ВІРТУАЛЬНІ АДРЕСИ ВІНДОВС ---
+VOID
+EFIAPI
+OnSetVirtualAddressMap (
+  IN EFI_EVENT  Event,
+  IN VOID       *Context
+  )
+{
+    // Безпечна конвертація покажчиків під нову карту пам'яті Windows ядра
+    if (gRT != NULL && gOriginalSetVariable != NULL) {
+        gRT->ConvertPointer(0, (VOID**)&gOriginalSetVariable);
+        gRT->ConvertPointer(0, (VOID**)&gRT);
+    }
+}
+
+// --- ТОЧКА ВХОДУ UEFI ДРАЙВЕРА ---
+EFI_STATUS
+EFIAPI
+UefiMain (
+  IN EFI_HANDLE        ImageHandle,
+  IN EFI_SYSTEM_TABLE  *SystemTable
+  )
+{
+    gOriginalSetVariable = gRT->SetVariable;
+    gRT->SetVariable = MyCustomSetVariable;
+
+    // ФІКС: Змінено ім'я макросу події на правильний стандарт Intel EDK2 - EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE
+    gBS->CreateEvent (
+           EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
+           TPL_NOTIFY,
+           OnSetVirtualAddressMap,
+           NULL,
+           &gVirtualAddressMapEvent
+           );
+
+    return EFI_SUCCESS;
+}
