@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
-#include "imemory.h"
+#include "memory/imemory.h"
 #include "shared.h"
 #include "driver_manager.h"
 #include "memory_utils.h"
