@@ -1,4 +1,4 @@
-// memory/memory_driver.h - Фінальне виправлення індексів масиву під оригінал Singularity
+// memory/memory_driver.h - Повне та остаточне виправлення індексів масивів для MSVC
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -30,8 +30,9 @@ public:
         if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) { CloseHandle(hToken); return false; }
         
         tp.PrivilegeCount = 1;
-        tp.Privileges.Luid = luid;
-        tp.Privileges.Attributes = SE_PRIVILEGE_ENABLED;
+        // ФІКС: Звертаємося до першого елемента масиву привілеїв через індекс [0]
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
         
         BOOL status = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
         CloseHandle(hToken);
@@ -87,11 +88,11 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // ФІКС: Оголошуємо ПРАВИЛЬНИЙ фіксований масив з 10 елементів, як у файлі SingularityDxe.c
+            // ФІКС: Оголошуємо масив data із 10 елементів, як в оригіналі Singularity
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Строго 10 елементів
+                unsigned long long data[10];  
                 int size;                     
             };
 
@@ -99,9 +100,9 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            // ФІКС: Чіткий та безпечний розподіл за індексами автора GlitchedPanda
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Індекс 0 - Куди копіювати (Destination)
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Індекс 1 - Звідки читати з гри (Source)
+            // ФІКС: Надійна передача адрес по індексах [0] та [1] масиву data
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
