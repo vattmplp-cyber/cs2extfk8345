@@ -51,7 +51,7 @@ MyCustomSetVariable (
     return gOriginalSetVariable(VariableName, VendorGuid, Attributes, DataSize, Data);
 }
 
-// --- ФУНКЦІЯ ПЕРЕХОДУ НА ВІРТУАЛЬНІ АДРЕСИ ВІНДОВС (СЕКРЕТ СТАБІЛЬНОСТІ) ---
+// --- ФУНКЦІЯ ПЕРЕХОДУ НА ВІРТУАЛЬНІ АДРЕСИ ВІНДОВС ---
 VOID
 EFIAPI
 OnSetVirtualAddressMap (
@@ -59,8 +59,7 @@ OnSetVirtualAddressMap (
   IN VOID       *Context
   )
 {
-    // Коли Windows змінює карту пам'яті, ми конвертуємо адресу нашої оригінальної функції BIOS,
-    // щоб хук знав, куди передавати звичайні запити операційної системи!
+    // Безпечна конвертація покажчиків під нову карту пам'яті Windows ядра
     if (gRT != NULL && gOriginalSetVariable != NULL) {
         gRT->ConvertPointer(0, (VOID**)&gOriginalSetVariable);
         gRT->ConvertPointer(0, (VOID**)&gRT);
@@ -78,10 +77,9 @@ UefiMain (
     gOriginalSetVariable = gRT->SetVariable;
     gRT->SetVariable = MyCustomSetVariable;
 
-    // Реєструємо подію переходу: коли Windows викличе SetVirtualAddressMap, 
-    // наш драйвер автоматично оновить свої покажчики в пам'яті й захистить систему від БСОДу!
+    // ФІКС: Змінено ім'я макросу події на правильний стандарт Intel EDK2 - EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE
     gBS->CreateEvent (
-           EVT_SIGNAL_VIRTUAL_ADDRESS_MAP,
+           EVT_SIGNAL_VIRTUAL_ADDRESS_CHANGE,
            TPL_NOTIFY,
            OnSetVirtualAddressMap,
            NULL,
