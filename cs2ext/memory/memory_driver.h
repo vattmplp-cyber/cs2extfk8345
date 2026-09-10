@@ -1,4 +1,4 @@
-// memory/memory_driver.h - Повне та остаточне виправлення індексів масивів для MSVC
+// memory/memory_driver.h - Повний обхід Secure Kernel через безпечні запити читання
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -22,23 +22,6 @@ public:
         close();
     }
 
-    static bool EnablePrivilege(LPCWSTR privilegeName) {
-        HANDLE hToken;
-        TOKEN_PRIVILEGES tp;
-        LUID luid;
-        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) return false;
-        if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) { CloseHandle(hToken); return false; }
-        
-        tp.PrivilegeCount = 1;
-        // ФІКС: Звертаємося до першого елемента масиву привілеїв через індекс [0]
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        
-        BOOL status = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
-        CloseHandle(hToken);
-        return status && (GetLastError() == ERROR_SUCCESS);
-    }
-
     bool attach(const wchar_t* process_name) override {
         close();
 
@@ -48,8 +31,6 @@ public:
 
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
-        } else {
-            EnablePrivilege(L"SeSystemEnvironmentPrivilege");
         }
 
         pid = find_process(process_name);
@@ -88,11 +69,10 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // ФІКС: Оголошуємо масив data із 10 елементів, як в оригіналі Singularity
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  
+                unsigned long long data[10];  // Стабільний масив
                 int size;                     
             };
 
@@ -100,12 +80,13 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            // ФІКС: Надійна передача адрес по індексах [0] та [1] масиву data
             cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
             cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            // ФІКС: Використовуємо БЕЗПЕЧНУ функцію читання Get замість Set!
+            // Вона не тригерить Secure Kernel, не викликає БСОД, але BIOS її бачить і виконує CopyMem!
+            GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
             std::wcout << std::flush;
             Sleep(0); 
