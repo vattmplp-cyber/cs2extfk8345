@@ -1,4 +1,4 @@
-// memory/memory_driver.h - Повне та остаточне виправлення передачі буфера під Singularity
+// memory/memory_driver.h - Фінальне виправлення індексів масиву під оригінал Singularity
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -30,8 +30,8 @@ public:
         if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) { CloseHandle(hToken); return false; }
         
         tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        tp.Privileges.Luid = luid;
+        tp.Privileges.Attributes = SE_PRIVILEGE_ENABLED;
         
         BOOL status = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
         CloseHandle(hToken);
@@ -48,7 +48,6 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            // Отримуємо повні системні права NVRAM
             EnablePrivilege(L"SeSystemEnvironmentPrivilege");
         }
 
@@ -88,11 +87,11 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // Еталонна структура з масивом data строго за рядком 48 автора Singularity
+            // ФІКС: Оголошуємо ПРАВИЛЬНИЙ фіксований масив з 10 елементів, як у файлі SingularityDxe.c
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив з 10 елементів
+                unsigned long long data[10];  // Строго 10 елементів
                 int size;                     
             };
 
@@ -100,17 +99,13 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            // ФІКС БАГУ: Передаємо ОРИГІНАЛЬНИЙ чистий покажчик на виділену ОЗП нашого читу,
-            // куди UEFI скопіює байти, а не віртуальну адресу самого вказівника!
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Source (CS2.exe)
+            // ФІКС: Чіткий та безпечний розподіл за індексами автора GlitchedPanda
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Індекс 0 - Куди копіювати (Destination)
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Індекс 1 - Звідки читати з гри (Source)
             cmd.size = static_cast<int>(size);
 
-            // Асинхронно відправляємо команду прямо на рівні заліза плати Acer
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
-            // Скидаємо буфер потоку та даємо процесору Core i7 Nitro долі наносекунди, 
-            // щоб залізо встигло заповнити пам'ять до того, як C++ прочитає результат.
             std::wcout << std::flush;
             Sleep(0); 
 
