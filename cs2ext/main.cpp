@@ -1,4 +1,3 @@
-```cpp
 #include <Windows.h>
 #include <cstdio>
 #include <chrono>
@@ -484,4 +483,3 @@ int main() {
 
     return 0;
 }
-```
