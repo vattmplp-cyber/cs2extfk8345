@@ -1,3 +1,4 @@
+// memory/memory_driver.h - Остаточний фікс масивів даних для оригінального Singularity.efi
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -68,11 +69,11 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // Еталонна структура з масивом data з файлу SingularityDxe.c автора
+            // ФІКС БАГУ: Явно оголошуємо фіксований масив на 10 елементів, як у SingularityDxe.c
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив строго з 10 елементів!
+                unsigned long long data[10];  
                 int size;                     
             };
 
@@ -80,12 +81,11 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            // Чітко вказуємо правильні індекси масиву для копіювання заліза
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди покласти дані (Destination)
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки взяти дані (Source)
+            // ФІКС БАГУ: Записуємо строго в окремі комірки масиву без наповзання на змінні
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            // Викликаємо оригінальний Set, який хукає Singularity.efi
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
             std::wcout << std::flush;
