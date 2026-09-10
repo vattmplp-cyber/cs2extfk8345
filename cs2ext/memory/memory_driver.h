@@ -68,11 +68,11 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // ФІКС БАГУ: Оголошуємо СТРОГО масив із 10 елементів, як у SingularityDxe.c автора!
+            // Еталонна структура з масивом data з файлу SingularityDxe.c автора
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  
+                unsigned long long data[10];  // Масив строго з 10 елементів!
                 int size;                     
             };
 
@@ -80,13 +80,13 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            // ФІКС БАГУ: Чітко записуємо адреси в різні індекси масиву (0 та 1)
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
+            // Чітко вказуємо правильні індекси масиву для копіювання заліза
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди покласти дані (Destination)
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки взяти дані (Source)
             cmd.size = static_cast<int>(size);
 
-            // ФІКС БАГУ: Безпечне читання Get замість Set, щоб назавжди прибрати SECURE_KERNEL_ERROR
-            GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            // Викликаємо оригінальний Set, який хукає Singularity.efi
+            SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
             std::wcout << std::flush;
             Sleep(0); 
