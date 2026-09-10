@@ -1,4 +1,3 @@
-// memory/memory_driver.h - Остаточний фікс масивів даних для оригінального Singularity.efi
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -69,11 +68,10 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // ФІКС БАГУ: Явно оголошуємо фіксований масив на 10 елементів, як у SingularityDxe.c
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  
+                unsigned long long data;  // Масив з 10 елементів
                 int size;                     
             };
 
@@ -81,13 +79,30 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            // ФІКС БАГУ: Записуємо строго в окремі комірки масиву без наповзання на змінні
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
+            cmd.data = reinterpret_cast<unsigned long long>(buffer);  // Destination
+            cmd.data = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
-            
+            // Викликаємо функцію Windows
+            BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            DWORD last_error = GetLastError();
+
+            // ====================================================================
+            // 🧭 НАШ НОВИЙ ВБУДОВАНИЙ ДЕБАГЕР ПАМ'ЯТІ (ЛОГИ)
+            // ====================================================================
+            // Показуємо логи тільки для важливих великих структур (наприклад, entity_list), 
+            // щоб консоль не летіла зі швидкістю світла від дрібних читань
+            if (size >= 8) {
+                printf("[DEBUG UEFI] Requesting read from CS2 address: 0x%llX\n", (unsigned long long)address);
+                printf("[DEBUG UEFI] SetFirmware status: %s (Windows Error Code: %lu)\n", status ? "SUCCESS" : "FAILED", last_error);
+                
+                // Перевіряємо, що лежить у буфері після виклику BIOS
+                unsigned long long* check_val = reinterpret_cast<unsigned long long*>(buffer);
+                printf("[DEBUG UEFI] Bytes returned in buffer: 0x%llX\n", *check_val);
+                printf("--------------------------------------------------\n");
+            }
+            // ====================================================================
+
             std::wcout << std::flush;
             Sleep(0); 
 
