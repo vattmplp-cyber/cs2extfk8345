@@ -21,54 +21,6 @@ public:
         close();
     }
 
-    // ====================================================================
-    // 🔍 НАШ НОВИЙ МЕГА-ДЕБАГЕР ПРАВ ТА ТОКЕНІВ БЕЗПЕКИ WINDOWS
-    // ====================================================================
-    static bool DiagnoseAndEnableNVRAMPrivilege() {
-        printf("\n[DEBUG SECURITY] Starting Windows Token Diagnosis...\n");
-        
-        HANDLE hToken;
-        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, &hToken)) {
-            printf("[DEBUG SECURITY] Critical Error: Cannot open Process Token! Code: %lu\n", GetLastError());
-            return false;
-        }
-
-        LUID luid;
-        if (!LookupPrivilegeValueW(nullptr, L"SeSystemEnvironmentPrivilege", &luid)) {
-            printf("[DEBUG SECURITY] Critical Error: SeSystemEnvironmentPrivilege not found in OS! Code: %lu\n", GetLastError());
-            CloseHandle(hToken);
-            return false;
-        }
-
-        // Крок 1. Перевіряємо, чи бачить Windows це право всередині нашого ЕХЕ
-        TOKEN_PRIVILEGES tp;
-        tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-        // Намагаємося м'яко активувати його
-        SetLastError(ERROR_SUCCESS);
-        BOOL result = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
-        DWORD access_error = GetLastError();
-
-        CloseHandle(hToken);
-
-        if (!result) {
-            printf("[DEBUG SECURITY] AdjustTokenPrivileges failed entirely! Code: %lu\n", access_error);
-            return false;
-        }
-
-        if (access_error == ERROR_NOT_ALL_ASSIGNED) {
-            printf("[DEBUG SECURITY] STATUS: DISABLED (Windows explicitly revoked NVRAM rights for this process!)\n");
-            printf("[DEBUG SECURITY] Reason: VBS/HVCI Core Isolation actively filters this token in Usermode.\n");
-            return false;
-        }
-
-        printf("[DEBUG SECURITY] STATUS: SUCCESS (SeSystemEnvironmentPrivilege successfully ACTIVATED in token!)\n");
-        printf("--------------------------------------------------------------------------------\n");
-        return true;
-    }
-
     bool attach(const wchar_t* process_name) override {
         close();
 
@@ -79,8 +31,8 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            // Запускаємо діагностику прав при підключенні
-            DiagnoseAndEnableNVRAMPrivilege();
+            // ЧИСТИЙ ПАСИВНИЙ ЛОГ: Ніяких викликів AdjustTokenPrivileges чи EnablePrivilege!
+            printf("\n[DEBUG] UEFI Backend selected. Passive monitoring mode initialized.\n");
         }
 
         pid = find_process(process_name);
@@ -119,10 +71,11 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
+            // Еталонна структура з масивом data з файлу SingularityDxe.c
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Стабільний оригінальний масив
+                unsigned long long data[10];  // Масив строго з 10 елементів!
                 int size;                     
             };
 
@@ -130,20 +83,22 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди писати (Destination)
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки читати (Source)
             cmd.size = static_cast<int>(size);
 
+            // Пасивний системний виклик без ручного увімкнення токенів
             BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             DWORD last_error = GetLastError();
 
+            // Виводимо виключно діагностичні логи для великих структур
             if (size >= 8) {
-                printf("[DEBUG UEFI] Requesting read from CS2 address: 0x%llX\n", (unsigned long long)address);
+                printf("[DEBUG UEFI] Request Address: 0x%llX\n", (unsigned long long)address);
                 printf("[DEBUG UEFI] SetFirmware status: %s (Windows Error Code: %lu)\n", status ? "SUCCESS" : "FAILED", last_error);
                 
                 unsigned long long* check_val = reinterpret_cast<unsigned long long*>(buffer);
-                printf("[DEBUG UEFI] Bytes returned in buffer: 0x%llX\n", *check_val);
-                printf("--------------------------------------------------------------------------------\n");
+                printf("[DEBUG UEFI] Buffer raw output: 0x%llX\n", *check_val);
+                printf("--------------------------------------------------\n");
             }
 
             std::wcout << std::flush;
