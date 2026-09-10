@@ -1,4 +1,4 @@
-// memory/memory_driver.h - Фінальне виправлення індексів масиву даних Singularity
+// memory/memory_driver.h - Фіксація асинхронних затримок заліза UEFI Singularity
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -10,7 +10,6 @@
 #include "driver_manager.h"
 #include "memory_utils.h"
 
-// Еталонний GUID оригінального проекту Singularity
 const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}"; 
 
 class MemoryDriver : public IMemory {
@@ -22,6 +21,20 @@ public:
         close();
     }
 
+    static bool EnablePrivilege(LPCWSTR privilegeName) {
+        HANDLE hToken;
+        TOKEN_PRIVILEGES tp;
+        LUID luid;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) return false;
+        if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) { CloseHandle(hToken); return false; }
+        tp.PrivilegeCount = 1;
+        tp.Privileges.Luid = luid;
+        tp.Privileges.Attributes = SE_PRIVILEGE_ENABLED;
+        BOOL status = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
+        CloseHandle(hToken);
+        return status && (GetLastError() == ERROR_SUCCESS);
+    }
+
     bool attach(const wchar_t* process_name) override {
         close();
 
@@ -31,6 +44,8 @@ public:
 
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
+        } else {
+            EnablePrivilege(SE_SYSTEM_ENVIRONMENT_NAME);
         }
 
         pid = find_process(process_name);
@@ -69,25 +84,27 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // ФІКС: Еталонна структура MemoryCommand з файлу SingularityDxe.c (Масив data[10])
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив з 10 елементів
+                unsigned long long data[10];  // Еталонний масив з 10 елементів
                 int size;                     
             };
 
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
-            
-            // ФІКС: Чіткий розподіл за індексами автора GlitchedPanda
             cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди писати (Destination)
             cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки читати (Source)
             cmd.size = static_cast<int>(size);
 
-            // Викликаємо оригінальну системну назву "Singularity42"
+            // Надсилаємо запит в BIOS Singularity
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            
+            // ФІКС БАГУ: Апаратний бар'єр пам'яті. Змушуємо потік процесора перепочити на 0 мілісекунд, 
+            // щоб залізо встигло фізично заповнити буфер 'buffer' перед тим, як C++ прочитає звідти дані!
+            Sleep(0); 
+
             return true;
         }
     }
@@ -116,7 +133,6 @@ private:
             return 0;
         } 
         else {
-            // Безпечний та швидкий пошук бази client.dll через стандартний Toolhelp32
             uintptr_t base_addr = 0;
             HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
             if (snapshot != INVALID_HANDLE_VALUE) {
