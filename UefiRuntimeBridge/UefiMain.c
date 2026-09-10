@@ -5,25 +5,22 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 
-// НАШ УНІКАЛЬНИЙ GUID (Такий самий, як у нашому клієнті C++)
+// НАШ УНІКАЛЬНИЙ GUID
 #define COMPILER_UEFI_GUID \
   { 0x12345678, 0x1234, 0x1234, { 0x12, 0x34, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC } }
 
 static EFI_GUID gMyDriverGuid = COMPILER_UEFI_GUID;
-
-// Вказівник на оригінальну функцію BIOS, щоб комп'ютер не зависав
 static EFI_SET_VARIABLE gOriginalSetVariable = NULL;
 
-// Структура пакету даних, яка приходить від нашого C++ клієнта
 typedef struct {
-    UINT32     command_id;      // 1 - читання, 2 - модуль
+    UINT32     command_id;      
     UINT32     target_pid;
     UINT64     source_address;
     UINT64     output_buffer;
     UINT64     read_size;
 } UEFI_READ_PACKET;
 
-// --- ГОЛОВНИЙ ХУК-ПЕРЕХОПЛЮВАЧ ---
+// --- ВИПРАВЛЕНИЙ БЕЗПЕЧНИЙ ХУК-ПЕРЕХОПЛЮВАЧ ---
 EFI_STATUS
 EFIAPI
 MyCustomSetVariable (
@@ -34,21 +31,28 @@ MyCustomSetVariable (
   IN  VOID      *Data
   )
 {
-    // 1. Перевіряємо, чи це запис від нашого читу (по GUID та імені змінної)
+    // Золоте правило безпеки: якщо Windows прислала порожні системні параметри,
+    // ми їх не чіпаємо і миттєво віддаємо оригінальному BIOS!
+    if (VariableName == NULL || VendorGuid == NULL) {
+        return gOriginalSetVariable(VariableName, VendorGuid, Attributes, DataSize, Data);
+    }
+
+    // Тепер порівняння GUID та імені змінної є повністю безпечним
     if (CompareGuid(VendorGuid, &gMyDriverGuid) && StrCmp(VariableName, L"UefiRead") == 0) {
         if (Data != NULL && DataSize >= sizeof(UEFI_READ_PACKET)) {
             UEFI_READ_PACKET *packet = (UEFI_READ_PACKET*)Data;
 
-            if (packet->command_id == 1) { // КОМАНДА НА ЧИТАННЯ ПАМ'ЯТІ ГРИ CS2
-                // UEFI працює на рівні фізичної пам'яті (Ring -2).
-                // Виконується пряме низькорівневе копіювання байтів із процесу гри в клієнт!
-                CopyMem((VOID*)(packet->output_buffer), (VOID*)(packet->source_address), (UINTN)packet->read_size);
-                return EFI_SUCCESS;
+            if (packet->command_id == 1) { 
+                // Безпечне копіювання: перевіряємо адреси перед виконанням транзиту
+                if (packet->output_buffer != 0 && packet->source_address != 0 && packet->read_size > 0) {
+                    CopyMem((VOID*)(packet->output_buffer), (VOID*)(packet->source_address), (UINTN)packet->read_size);
+                    return EFI_SUCCESS;
+                }
             }
         }
     }
 
-    // 2. Якщо це звичайний запит Windows — передаємо його оригінальній функції BIOS
+    // Передаємо всі звичайні системні запити оригінальній функції плати Acer
     return gOriginalSetVariable(VariableName, VendorGuid, Attributes, DataSize, Data);
 }
 
@@ -60,14 +64,13 @@ UefiMain (
   IN EFI_SYSTEM_TABLE  *SystemTable
   )
 {
-    Print(L"[+] UefiRuntimeBridge: Initializing custom BIOS Hook...\n");
+    // Перевіряємо, щоб не зробити подвійний хук, якщо ми перезавантажуємо драйвер у Shell
+    if (gRT->SetVariable == MyCustomSetVariable) {
+        return EFI_SUCCESS;
+    }
 
-    // Зберігаємо адресу оригінальної функції SetVariable у глобальну змінну
     gOriginalSetVariable = gRT->SetVariable;
-
-    // ПРИМУСОВО робимо ХУК: записуємо адресу нашого коду замість оригінальної функції в таблицю!
     gRT->SetVariable = MyCustomSetVariable;
 
-    Print(L"[+] UefiRuntimeBridge: Hook successfully installed! VBS will trust this memory.\n");
     return EFI_SUCCESS;
 }
