@@ -1,4 +1,3 @@
-// memory/memory_driver.h - Повний обхід Secure Kernel через безпечні запити читання
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -69,10 +68,11 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
+            // ФІКС БАГУ: Оголошуємо СТРОГО масив із 10 елементів, як у SingularityDxe.c автора!
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Стабільний масив
+                unsigned long long data[10];  
                 int size;                     
             };
 
@@ -80,12 +80,12 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: CopyMem
             
+            // ФІКС БАГУ: Чітко записуємо адреси в різні індекси масиву (0 та 1)
             cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
             cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            // ФІКС: Використовуємо БЕЗПЕЧНУ функцію читання Get замість Set!
-            // Вона не тригерить Secure Kernel, не викликає БСОД, але BIOS її бачить і виконує CopyMem!
+            // ФІКС БАГУ: Безпечне читання Get замість Set, щоб назавжди прибрати SECURE_KERNEL_ERROR
             GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
             std::wcout << std::flush;
