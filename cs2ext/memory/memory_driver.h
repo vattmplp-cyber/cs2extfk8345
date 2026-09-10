@@ -1,4 +1,4 @@
-// memory/memory_driver.h - Повна синхронізація зі структурами SingularityDxe.c
+// memory/memory_driver.h - Фінальне виправлення індексів масиву даних Singularity
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -69,22 +69,24 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // Еталонна структура MemoryCommand з файлу SingularityDxe.c (Рядок 48)
+            // ФІКС: Еталонна структура MemoryCommand з файлу SingularityDxe.c (Масив data[10])
             struct SINGULARITY_MEMORY_COMMAND {
-                int magic;                    // Має бути 0xDEADFADE
-                int operation;                // 0 - копіювання пам'яті
-                unsigned long long data[10];  // data[0] - dst, data[1] - src
-                int size;                     // кількість байт
+                int magic;                    
+                int operation;                
+                unsigned long long data[10];  // Масив з 10 елементів
+                int size;                     
             };
 
             SINGULARITY_MEMORY_COMMAND cmd{};
-            cmd.magic = 0xDEADFADE;           // Наш перепустковий квиток у коді Singularity!
-            cmd.operation = 0;                // Операція 0: CopyMem
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди покласти дані в нашому читі
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки зчитати дані з гри CS2
+            cmd.magic = 0xDEADFADE;           
+            cmd.operation = 0;                // Op 0: CopyMem
+            
+            // ФІКС: Чіткий розподіл за індексами автора GlitchedPanda
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди писати (Destination)
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки читати (Source)
             cmd.size = static_cast<int>(size);
 
-            // Викликаємо оригінальну системну назву "Singularity42" (Рядок 44)
+            // Викликаємо оригінальну системну назву "Singularity42"
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             return true;
         }
@@ -114,7 +116,7 @@ private:
             return 0;
         } 
         else {
-            // Безпечний та швидкий пошук бази client.dll, який не тригерить VAC
+            // Безпечний та швидкий пошук бази client.dll через стандартний Toolhelp32
             uintptr_t base_addr = 0;
             HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
             if (snapshot != INVALID_HANDLE_VALUE) {
