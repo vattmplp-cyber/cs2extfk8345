@@ -1,4 +1,4 @@
-// memory/memory_driver.h - Фіксація асинхронних затримок заліза UEFI Singularity
+// memory/memory_driver.h - Повне виправлення типів MSVC для Singularity
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -27,9 +27,12 @@ public:
         LUID luid;
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) return false;
         if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) { CloseHandle(hToken); return false; }
+        
         tp.PrivilegeCount = 1;
-        tp.Privileges.Luid = luid;
-        tp.Privileges.Attributes = SE_PRIVILEGE_ENABLED;
+        // ФІКС: Звернення до масиву через індекс [0]
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        
         BOOL status = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr);
         CloseHandle(hToken);
         return status && (GetLastError() == ERROR_SUCCESS);
@@ -45,7 +48,8 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            EnablePrivilege(SE_SYSTEM_ENVIRONMENT_NAME);
+            // ФІКС: Явне приведення типу макросу до Юнікоду за допомогою макросу TEXT()
+            EnablePrivilege(TEXT(SE_SYSTEM_ENVIRONMENT_NAME));
         }
 
         pid = find_process(process_name);
@@ -87,7 +91,7 @@ public:
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Еталонний масив з 10 елементів
+                unsigned long long data[10];  // Масив з 10 елементів
                 int size;                     
             };
 
@@ -98,11 +102,9 @@ public:
             cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки читати (Source)
             cmd.size = static_cast<int>(size);
 
-            // Надсилаємо запит в BIOS Singularity
             SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             
-            // ФІКС БАГУ: Апаратний бар'єр пам'яті. Змушуємо потік процесора перепочити на 0 мілісекунд, 
-            // щоб залізо встигло фізично заповнити буфер 'buffer' перед тим, як C++ прочитає звідти дані!
+            // Апаратний бар'єр для синхронізації ОЗП та i7 процесора
             Sleep(0); 
 
             return true;
