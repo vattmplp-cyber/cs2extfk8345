@@ -21,6 +21,36 @@ public:
         close();
     }
 
+    // СУВОРЕ ВИКОНАННЯ ІНСТРУКЦІЇ ТВОГО ШІ ДЛЯ АКТИВАЦІЇ ПРИВІЛЕЮ
+    bool EnableSystemEnvironmentPrivilege() const {
+        HANDLE hToken;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+            return false;
+        }
+
+        TOKEN_PRIVILEGES tp;
+        LUID luid;
+
+        // Використовуємо стандартний системний макрос
+        if (!LookupPrivilegeValueW(NULL, SE_SYSTEM_ENVIRONMENT_NAME, &luid)) {
+            CloseHandle(hToken);
+            return false;
+        }
+
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+        if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), NULL, NULL)) {
+            CloseHandle(hToken);
+            return false;
+        }
+
+        bool success = (GetLastError() == ERROR_SUCCESS);
+        CloseHandle(hToken);
+        return success;
+    }
+
     bool attach(const wchar_t* process_name) override {
         close();
 
@@ -31,8 +61,15 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            // Безпечний старт без викликання синіх екранів Secure Kernel
-            printf("\n[DEBUG] UEFI Backend selected. Passive monitoring mode initialized.\n");
+            printf("\n[DEBUG] UEFI Backend selected. Activating privilege...\n");
+            
+            SetLastError(ERROR_SUCCESS);
+            bool priv_ok = EnableSystemEnvironmentPrivilege();
+            DWORD priv_err = GetLastError();
+            
+            printf("[DEBUG TOKEN] EnableSystemEnvironmentPrivilege returned: %s\n", priv_ok ? "TRUE" : "FALSE");
+            printf("[DEBUG TOKEN] GetLastError after AdjustTokenPrivileges: %lu\n", priv_err);
+            printf("--------------------------------------------------------------------------------\n");
         }
 
         pid = find_process(process_name);
@@ -71,11 +108,10 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // Структура на 100% відповідає масиву нашого нового SingularityDxe.efi
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив строго з 10 елементів
+                unsigned long long data[10];  // Масив з 10 елементів строго як у драйвері
                 int size;                     
             };
 
@@ -83,17 +119,14 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: memcpy
             
-            // Розподіляємо байти строго по індексах нашого нового Get-хука в BIOS
             cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
             cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            // ВИКЛИКАЄМО ЛЕГІТИМНЕ ЧИТАННЯ ЗАМІСТЬ ЗАПИСУ
-            // Ця функція повністю обходить помилку 1314 без привілеїв адміністратора
+            // Викликаємо функцію пасивного читання GetFirmwareEnvironmentVariableW
             DWORD bytes_returned = GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             DWORD last_error = GetLastError();
 
-            // Виводимо виключно пасивні діагностичні логи для великих структур
             if (size >= 8) {
                 printf("[DEBUG UEFI] Request Address: 0x%llX\n", (unsigned long long)address);
                 printf("[DEBUG UEFI] GetFirmware status: %s (Windows Error Code: %lu)\n", bytes_returned > 0 ? "SUCCESS" : "FAILED", last_error);
