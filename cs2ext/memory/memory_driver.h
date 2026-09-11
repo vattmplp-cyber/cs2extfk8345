@@ -21,7 +21,7 @@ public:
         close();
     }
 
-    // СУВОРЕ ТА ТОЧНЕ ВИКОНАННЯ ІНСТРУКЦІЇ ТВОГО ШІ З ІНДЕКСОМ [0]
+    // Твоя успішна активація привілею, яка повністю прибрала помилку 1314!
     bool EnableSystemEnvironmentPrivilege() const {
         HANDLE hToken;
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
@@ -37,7 +37,6 @@ public:
         }
 
         tp.PrivilegeCount = 1;
-        // ФІКС: Строго за завітами ШІ вказуємо перший елемент масиву [0]
         tp.Privileges[0].Luid = luid;
         tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
@@ -111,7 +110,7 @@ public:
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data;  // Еталонний масив з 10 елементів
+                unsigned long long data[10];  // Масив з 10 елементів автора
                 int size;                     
             };
 
@@ -119,16 +118,17 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: memcpy
             
-            cmd.data = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data = static_cast<unsigned long long>(address);       // Source
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            DWORD bytes_returned = GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            // ФІКС: Повертаємо рідну для Singularity функцію Set, яка тепер захищена активованим токеном!
+            BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             DWORD last_error = GetLastError();
 
             if (size >= 8) {
                 printf("[DEBUG UEFI] Request Address: 0x%llX\n", (unsigned long long)address);
-                printf("[DEBUG UEFI] GetFirmware status: %s (Windows Error Code: %lu)\n", bytes_returned > 0 ? "SUCCESS" : "FAILED", last_error);
+                printf("[DEBUG UEFI] SetFirmware status: %s (Windows Error Code: %lu)\n", status ? "SUCCESS" : "FAILED", last_error);
                 
                 unsigned long long* check_val = reinterpret_cast<unsigned long long*>(buffer);
                 printf("[DEBUG UEFI] Buffer raw output: 0x%llX\n", *check_val);
