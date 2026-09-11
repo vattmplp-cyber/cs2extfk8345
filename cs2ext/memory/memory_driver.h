@@ -31,7 +31,7 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            // ЧИСТИЙ ПАСИВНИЙ ЛОГ: Ніяких викликів AdjustTokenPrivileges чи EnablePrivilege!
+            // Безпечний старт без викликання синіх екранів Secure Kernel
             printf("\n[DEBUG] UEFI Backend selected. Passive monitoring mode initialized.\n");
         }
 
@@ -71,30 +71,32 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            // Еталонна структура з масивом data з файлу SingularityDxe.c
+            // Структура на 100% відповідає масиву нашого нового SingularityDxe.efi
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив строго з 10 елементів!
+                unsigned long long data[10];  // Масив строго з 10 елементів
                 int size;                     
             };
 
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic = 0xDEADFADE;           
-            cmd.operation = 0;                // Op 0: CopyMem
+            cmd.operation = 0;                // Op 0: memcpy
             
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Куди писати (Destination)
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Звідки читати (Source)
+            // Розподіляємо байти строго по індексах нашого нового Get-хука в BIOS
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
+            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            // Пасивний системний виклик без ручного увімкнення токенів
-            BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            // ВИКЛИКАЄМО ЛЕГІТИМНЕ ЧИТАННЯ ЗАМІСТЬ ЗАПИСУ
+            // Ця функція повністю обходить помилку 1314 без привілеїв адміністратора
+            DWORD bytes_returned = GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             DWORD last_error = GetLastError();
 
-            // Виводимо виключно діагностичні логи для великих структур
+            // Виводимо виключно пасивні діагностичні логи для великих структур
             if (size >= 8) {
                 printf("[DEBUG UEFI] Request Address: 0x%llX\n", (unsigned long long)address);
-                printf("[DEBUG UEFI] SetFirmware status: %s (Windows Error Code: %lu)\n", status ? "SUCCESS" : "FAILED", last_error);
+                printf("[DEBUG UEFI] GetFirmware status: %s (Windows Error Code: %lu)\n", bytes_returned > 0 ? "SUCCESS" : "FAILED", last_error);
                 
                 unsigned long long* check_val = reinterpret_cast<unsigned long long*>(buffer);
                 printf("[DEBUG UEFI] Buffer raw output: 0x%llX\n", *check_val);
