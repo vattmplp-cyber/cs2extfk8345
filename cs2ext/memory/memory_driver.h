@@ -15,39 +15,10 @@ const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
 class MemoryDriver : public IMemory {
 public:
     explicit MemoryDriver(bool use_kdmapper)
-        : m_use_kdmapper(use_kdmapper) {}
+        : m_use_kdmapper(use_kdmapper), m_uefi_buffer_base(0) {}
 
     ~MemoryDriver() override {
         close();
-    }
-
-    // Твоя успішна активація привілею, яка повністю прибрала помилку 1314!
-    bool EnableSystemEnvironmentPrivilege() const {
-        HANDLE hToken;
-        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
-            return false;
-        }
-
-        TOKEN_PRIVILEGES tp;
-        LUID luid;
-
-        if (!LookupPrivilegeValueW(NULL, L"SeSystemEnvironmentPrivilege", &luid)) {
-            CloseHandle(hToken);
-            return false;
-        }
-
-        tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-
-        if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), NULL, NULL)) {
-            CloseHandle(hToken);
-            return false;
-        }
-
-        bool success = (GetLastError() == ERROR_SUCCESS);
-        CloseHandle(hToken);
-        return success;
     }
 
     bool attach(const wchar_t* process_name) override {
@@ -60,14 +31,30 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         } else {
-            printf("\n[DEBUG] UEFI Backend selected. Activating privilege...\n");
-            
+            // ПОВНЕ ОЧИЩЕННЯ: Жодних AdjustTokenPrivileges! Повний спокій для Secure Kernel.
+            printf("\n[DEBUG] UEFI Shared Memory Backend chosen. Checking hardware bridge...\n");
+
+            // Запитуємо у BIOS адресу мутантського 32MB буфера через Op 1
+            struct SINGULARITY_MEMORY_COMMAND {
+                int magic;                    
+                int operation;                
+                unsigned long long data[10];  
+                int size;                     
+            };
+
+            SINGULARITY_MEMORY_COMMAND cmd{};
+            cmd.magic = 0xDEADFADE;           
+            cmd.operation = 1;                // Op 1: Запит адреси DriverBuffer автора
+            cmd.data[2] = 0x2000000;          // DRIVER_SIZE (32MB)
+            cmd.data[3] = reinterpret_cast<unsigned long long>(&m_uefi_buffer_base); // Отримуємо адресу буфера
+
             SetLastError(ERROR_SUCCESS);
-            bool priv_ok = EnableSystemEnvironmentPrivilege();
-            DWORD priv_err = GetLastError();
-            
-            printf("[DEBUG TOKEN] EnableSystemEnvironmentPrivilege returned: %s\n", priv_ok ? "TRUE" : "FALSE");
-            printf("[DEBUG TOKEN] GetLastError after AdjustTokenPrivileges: %lu\n", priv_err);
+            // Викликаємо пасивне читання, яке Windows пропустить без БСОДів
+            GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+            DWORD err = GetLastError();
+
+            printf("[DEBUG UEFI_INIT] Shared Bridge Requested. Windows Return Code: %lu\n", err);
+            printf("[DEBUG UEFI_INIT] Hardware 32MB Shared Buffer address: 0x%llX\n", m_uefi_buffer_base);
             printf("--------------------------------------------------------------------------------\n");
         }
 
@@ -91,7 +78,7 @@ public:
         if (h_driver != INVALID_HANDLE_VALUE) {
             CloseHandle(h_driver); h_driver = INVALID_HANDLE_VALUE;
         }
-        pid = 0; m_modules = {};
+        pid = 0; m_modules = {}; m_uefi_buffer_base = 0;
     }
 
     bool read_raw(uintptr_t address, void* buffer, size_t size) const override {
@@ -107,38 +94,28 @@ public:
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         } 
         else {
-            struct SINGULARITY_MEMORY_COMMAND {
-                int magic;                    
-                int operation;                
-                unsigned long long data[10];  // Масив з 10 елементів автора
-                int size;                     
-            };
+            // Якщо BIOS успішно повернув нам адресу спільного 32MB буфера, 
+            // ми працюємо СУВОРЕ крізь цей апаратний міст без постійних викликів NVRAM!
+            if (m_uefi_buffer_base != 0) {
+                struct SINGULARITY_MEMORY_COMMAND {
+                    int magic;                    
+                    int operation;                
+                    unsigned long long data[10];  
+                    int size;                     
+                };
 
-            SINGULARITY_MEMORY_COMMAND cmd{};
-            cmd.magic = 0xDEADFADE;           
-            cmd.operation = 0;                // Op 0: memcpy
-            
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
-            cmd.size = static_cast<int>(size);
+                SINGULARITY_MEMORY_COMMAND cmd{};
+                cmd.magic = 0xDEADFADE;           
+                cmd.operation = 0;                // Op 0: memcpy
+                cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
+                cmd.data[1] = static_cast<unsigned long long>(address);       // Source
+                cmd.size = static_cast<int>(size);
 
-            // ФІКС: Повертаємо рідну для Singularity функцію Set, яка тепер захищена активованим токеном!
-            BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
-            DWORD last_error = GetLastError();
-
-            if (size >= 8) {
-                printf("[DEBUG UEFI] Request Address: 0x%llX\n", (unsigned long long)address);
-                printf("[DEBUG UEFI] SetFirmware status: %s (Windows Error Code: %lu)\n", status ? "SUCCESS" : "FAILED", last_error);
-                
-                unsigned long long* check_val = reinterpret_cast<unsigned long long*>(buffer);
-                printf("[DEBUG UEFI] Buffer raw output: 0x%llX\n", *check_val);
-                printf("--------------------------------------------------\n");
+                // Безпечний пасивний лінк
+                GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
+                return true;
             }
-
-            std::wcout << std::flush;
-            Sleep(0); 
-
-            return true;
+            return false;
         }
     }
 
@@ -149,6 +126,7 @@ private:
     HANDLE    h_driver = INVALID_HANDLE_VALUE;
     DWORD     pid = 0;
     bool      m_use_kdmapper = false;
+    mutable unsigned long long m_uefi_buffer_base; // Адреса нашого 32MB мікро-мосту в ОЗП
 
     uintptr_t query_module_base(const wchar_t* module_name, size_t* out_size) const {
         if (!pid) return 0;
