@@ -32,7 +32,7 @@ public:
         LUID luid;
 
         // Використовуємо стандартний системний макрос
-        if (!LookupPrivilegeValueW(NULL, SE_SYSTEM_ENVIRONMENT_NAME, &luid)) {
+        if (!LookupPrivilegeValueW(NULL, SE_SYSTEM_ENVIRONMENT_WNAME, &luid)) {
             CloseHandle(hToken);
             return false;
         }
