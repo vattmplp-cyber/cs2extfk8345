@@ -5,8 +5,6 @@
 #include <cstdio>
 #include <memory>
 #include <iostream>
-#include <fstream>
-#include <vector>
 #include "imemory.h"
 #include "shared.h"
 #include "driver_manager.h"
@@ -17,7 +15,7 @@ const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
 class MemoryDriver : public IMemory {
 public:
     // Конструктор приймає тип бекенду:
-    // 1 - WinAPI, 2 - Syscalls, 3 - kdmapper, 4 - Постійні виклики UEFI, 5 - UEFI Авто-.sys завантаження
+    // 1 - WinAPI, 2 - Syscalls, 3 - kdmapper, 4 - Постійні виклики UEFI, 5 - завантаження через mapper.exe
     explicit MemoryDriver(int backend_mode)
         : m_backend_mode(backend_mode), h_driver(INVALID_HANDLE_VALUE), pid(0) {}
 
@@ -61,64 +59,37 @@ public:
             h_driver = CreateFileW(KDMP_USER_PATH, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) return false;
         }
-        // РЕЖИМ 5: АВТОНОМНЕ ЗАВАНТАЖЕННЯ ДРАЙВЕРА ЧЕРЕЗ UEFI BIOS
+        // РЕЖИМ 5: ТОЧНИЙ АНАЛОГ РЕЖИМУ 3, АЛЕ ЧЕРЕЗ MAPPER.EXE
         else if (m_backend_mode == 5) {
-            printf("[DEBUG] UEFI Mode 5: Preparing autonomous driver injection via Ring -2...\n");
-            EnableSystemEnvironmentPrivilege();
+            printf("[DEBUG] UEFI Mode 5: Executing mapper.exe for MemReaderKdmp.sys...\n");
+            
+            STARTUPINFOA si = { sizeof(si) };
+            PROCESS_INFORMATION pi;
+            ZeroMemory(&si, sizeof(si));
+            si.cb = sizeof(si);
+            si.dwFlags = STARTF_USESHOWWINDOW;
+            si.wShowWindow = SW_HIDE; // Запуск відбувається у фоновому режимі
 
-            std::ifstream file("MemReaderKdmp.sys", std::ios::binary | std::ios::ate);
-            if (!file.is_open()) {
-                printf("[DEBUG ERROR] MemReaderKdmp.sys not found next to EXE!\n");
+            char cmd_line[] = "mapper.exe MemReaderKdmp.sys";
+
+            if (CreateProcessA(NULL, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                // Очікуємо завершення роботи утиліти до 5 секунд
+                WaitForSingleObject(pi.hProcess, 5000);
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                printf("[DEBUG] mapper.exe finished injection process.\n");
+            } else {
+                printf("[DEBUG ERROR] Failed to start mapper.exe! Make sure it is next to this EXE.\n");
                 return false;
             }
 
-            std::streamsize size = file.tellg();
-            std::vector<char> buffer(size);
-            file.seekg(0, std::ios::beg);
-            if (!file.read(buffer.data(), size)) return false;
-            file.close();
-
-            struct SINGULARITY_MEMORY_COMMAND {
-                int magic; int operation; unsigned long long data; int size;
-            };
-
-            uintptr_t driver_buffer_uefi_addr = 0;
-            SINGULARITY_MEMORY_COMMAND alloc_cmd{};
-            alloc_cmd.magic = 0xDEADFADE;
-            alloc_cmd.operation = 1; // Op 1: AllocatePool
-            alloc_cmd.data = static_cast<unsigned long long>(size); 
-            alloc_cmd.data = reinterpret_cast<unsigned long long>(&driver_buffer_uefi_addr);
-            SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &alloc_cmd, sizeof(alloc_cmd));
-
-            if (driver_buffer_uefi_addr == 0) {
-                printf("[DEBUG ERROR] BIOS refused to allocate pool for the driver!\n");
-                return false;
-            }
-
-            SINGULARITY_MEMORY_COMMAND copy_cmd{};
-            copy_cmd.magic = 0xDEADFADE;
-            copy_cmd.operation = 0; // Op 0: memcpy
-            copy_cmd.data = driver_buffer_uefi_addr; 
-            copy_cmd.data = reinterpret_cast<unsigned long long>(buffer.data()); 
-            copy_cmd.size = static_cast<int>(size);
-            SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &copy_cmd, sizeof(copy_cmd));
-
-            unsigned long driver_start_status = 0;
-            SINGULARITY_MEMORY_COMMAND run_cmd{};
-            run_cmd.magic = 0xDEADFADE;
-            run_cmd.operation = 5; // Op 5: CallDriverEntry
-            run_cmd.data = driver_buffer_uefi_addr; 
-            run_cmd.data = reinterpret_cast<unsigned long long>(&driver_start_status);
-            SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &run_cmd, sizeof(run_cmd));
-
-            printf("[DEBUG] UEFI Driver Entry invoked. Kernel Status: 0x%lX\n", driver_start_status);
-
+            // Рівно такий самий підключення до створеного пристрою, як у режимі 3
             h_driver = CreateFileW(L"\\\\.\\MemReaderKdmp", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) {
-                printf("[DEBUG ERROR] Failed to connect to injected MemReaderKdmp driver handle!\n");
+                printf("[DEBUG ERROR] Failed to connect to MemReaderKdmp driver handle!\n");
                 return false;
             }
-            printf("[DEBUG SUCCESS] MemReaderKdmp fully operational via Ring -2 UEFI injection!\n");
+            printf("[DEBUG SUCCESS] MemReaderKdmp active via mapper.exe bypass!\n");
         }
         else if (m_backend_mode == 4) {
             printf("[DEBUG] UEFI Mode 4: Activating SeSystemEnvironmentPrivilege...\n");
@@ -128,7 +99,7 @@ public:
         pid = find_process(process_name);
         if (!pid) return false;
 
-        // Виправляємо передачу типів даних для отримання розмірів модулів
+        // Перевірка модулів працює абсолютно однаково для Режимів 3 та 5
         m_modules.client = query_module_base(L"client.dll", &m_modules.client_size);
         if (!m_modules.client) return false;
         
@@ -159,6 +130,7 @@ public:
             BOOL status = ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), buffer, size, &bytes_read);
             return status && (bytes_read == size);
         }
+        // РЕЖИМ 3 ТА 5 ОДНАКОВО читають дані через IOCTL хендл нашого драйвера ядра
         else if (m_backend_mode == 3 || m_backend_mode == 5) {
             if (h_driver == INVALID_HANDLE_VALUE) return false;
             READ_MEMORY_REQUEST request{};
@@ -170,12 +142,12 @@ public:
         }
         else if (m_backend_mode == 4) {
             struct SINGULARITY_MEMORY_COMMAND {
-                int magic; int operation; unsigned long long data; int size;
+                int magic; int operation; unsigned long long data[10]; int size;
             };
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic = 0xDEADFADE; cmd.operation = 0;
-            cmd.data = reinterpret_cast<unsigned long long>(buffer);
-            cmd.data = static_cast<unsigned long long>(address);
+            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);
+            cmd.data[1] = static_cast<unsigned long long>(address);
             cmd.size = static_cast<int>(size);
 
             BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
@@ -192,8 +164,6 @@ private:
     HANDLE    h_driver;
     DWORD     pid;
     int       m_backend_mode;
-    
-    // Структура модулів без дублювання та з чистими системними типами
     struct {
         uintptr_t client;          size_t client_size;
         uintptr_t engine2;         size_t engine2_size;
@@ -205,6 +175,7 @@ private:
     uintptr_t query_module_base(const wchar_t* module_name, size_t* out_size) const {
         if (!pid) return 0;
         
+        // Режими 3 та 5 використовують спільну логіку для запиту баз модулів гри
         if (m_backend_mode == 3 || m_backend_mode == 5) {
             if (h_driver == INVALID_HANDLE_VALUE) return 0;
             MODULE_BASE_REQUEST request{}; request.target_pid = pid;
@@ -226,13 +197,13 @@ private:
                 do {
                     if (_wcsicmp(me.szModule, module_name) == 0) {
                         base_addr = reinterpret_cast<uintptr_t>(me.modBaseAddr);
-if (out_size) *out_size = static_cast<size_t>(me.modBaseSize);
-break;
-}
-} while (Module32NextW(snapshot, &me));
-}
-CloseHandle(snapshot);
-}
-return base_addr;
-}
+                        if (out_size) *out_size = static_cast<size_t>(me.modBaseSize);
+                        break;
+                    }
+                } while (Module32NextW(snapshot, &me));
+            }
+            CloseHandle(snapshot);
+        }
+        return base_addr;
+    }
 };
