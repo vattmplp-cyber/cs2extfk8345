@@ -31,15 +31,15 @@ public:
         TOKEN_PRIVILEGES tp;
         LUID luid;
 
-        // Використовуємо стандартний системний макрос
-        if (!LookupPrivilegeValueW(NULL, SE_SYSTEM_ENVIRONMENT_WNAME, &luid)) {
+        // ФІКС: Передаємо істинне ім'я привілею у вигляді Юнікод-рядка безпосередньо для LookupPrivilegeValueW
+        if (!LookupPrivilegeValueW(NULL, L"SeSystemEnvironmentPrivilege", &luid)) {
             CloseHandle(hToken);
             return false;
         }
 
         tp.PrivilegeCount = 1;
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        tp.Privileges.Luid = luid;
+        tp.Privileges.Attributes = SE_PRIVILEGE_ENABLED;
 
         if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), NULL, NULL)) {
             CloseHandle(hToken);
@@ -111,7 +111,7 @@ public:
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data[10];  // Масив з 10 елементів строго як у драйвері
+                unsigned long long data;  // Масив з 10 елементів
                 int size;                     
             };
 
@@ -119,11 +119,10 @@ public:
             cmd.magic = 0xDEADFADE;           
             cmd.operation = 0;                // Op 0: memcpy
             
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);  // Destination
-            cmd.data[1] = static_cast<unsigned long long>(address);       // Source
+            cmd.data = reinterpret_cast<unsigned long long>(buffer);  // Destination
+            cmd.data = static_cast<unsigned long long>(address);       // Source
             cmd.size = static_cast<int>(size);
 
-            // Викликаємо функцію пасивного читання GetFirmwareEnvironmentVariableW
             DWORD bytes_returned = GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
             DWORD last_error = GetLastError();
 
