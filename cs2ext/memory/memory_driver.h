@@ -21,7 +21,7 @@ public:
         close();
     }
 
-    // СУВОРЕ ВИКОНАННЯ ІНСТРУКЦІЇ ТВОГО ШІ ДЛЯ АКТИВАЦІЇ ПРИВІЛЕЮ
+    // СУВОРЕ ТА ТОЧНЕ ВИКОНАННЯ ІНСТРУКЦІЇ ТВОГО ШІ З ІНДЕКСОМ [0]
     bool EnableSystemEnvironmentPrivilege() const {
         HANDLE hToken;
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
@@ -31,15 +31,15 @@ public:
         TOKEN_PRIVILEGES tp;
         LUID luid;
 
-        // ФІКС: Передаємо істинне ім'я привілею у вигляді Юнікод-рядка безпосередньо для LookupPrivilegeValueW
         if (!LookupPrivilegeValueW(NULL, L"SeSystemEnvironmentPrivilege", &luid)) {
             CloseHandle(hToken);
             return false;
         }
 
         tp.PrivilegeCount = 1;
-        tp.Privileges.Luid = luid;
-        tp.Privileges.Attributes = SE_PRIVILEGE_ENABLED;
+        // ФІКС: Строго за завітами ШІ вказуємо перший елемент масиву [0]
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
         if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), NULL, NULL)) {
             CloseHandle(hToken);
@@ -111,7 +111,7 @@ public:
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic;                    
                 int operation;                
-                unsigned long long data;  // Масив з 10 елементів
+                unsigned long long data;  // Еталонний масив з 10 елементів
                 int size;                     
             };
 
