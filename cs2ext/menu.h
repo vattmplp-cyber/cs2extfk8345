@@ -197,7 +197,7 @@ private:
 
         static bool backend_changed = false;
 
-        // Переводимо індекси конфігу (1,2,3,4) у відповідні кнопки ImGui
+        // Переводимо індекси конфігу (1,2,3,4,5) у відповідні кнопки ImGui
         int current_backend = g_settings.memory_backend;
 
         if (ImGui::RadioButton(
@@ -240,7 +240,18 @@ private:
             )) {
             g_settings.memory_backend = 4;
             backend_changed = true;
-        } // НАША НОВА КНОПКА
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::RadioButton(
+                "UEFI Auto-.sys",
+                &current_backend,
+                5
+            )) {
+            g_settings.memory_backend = 5;
+            backend_changed = true;
+        }
 
         if (backend_changed)
             ImGui::TextColored(
