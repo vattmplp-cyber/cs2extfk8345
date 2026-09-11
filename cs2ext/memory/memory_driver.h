@@ -205,6 +205,14 @@ private:
     DWORD     pid;
     int       m_backend_mode;
     struct {
+    uintptr_t engine2;
+    uint32_t engine2_size;      // Додайте це
+    uintptr_t schemasystem;
+    uint32_t schemasystem_size; // Додайте це
+    uintptr_t tier0;
+    uint32_t tier0_size;        // Додайте це
+    uintptr_t vphysics2;
+    uint32_t vphysics2_size;    // Додайте це
         uintptr_t client; size_t client_size;
         uintptr_t engine2; uintptr_t schemasystem;
         uintptr_t tier0; uintptr_t vphysics2;
