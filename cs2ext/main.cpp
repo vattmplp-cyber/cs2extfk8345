@@ -70,15 +70,17 @@ enum MemoryBackend {
     WinApi = 1,
     IndirectSyscall = 2,
     KernelDriver = 3,
-    UefiRuntime = 4
+    UefiRuntime = 4,
+    UefiAutoSys = 5
 };
 
 std::unique_ptr<IMemory> CreateMemoryBackend(MemoryBackend backend) {
     switch (backend) {
         case WinApi:           return std::make_unique<MemoryWinApi>();
         case IndirectSyscall:  return std::make_unique<MemorySyscall>();
-        case KernelDriver:     return std::make_unique<MemoryDriver>(true);  
-        case UefiRuntime:      return std::make_unique<MemoryDriver>(false); 
+        case KernelDriver:     return std::make_unique<MemoryDriver>(3);  
+        case UefiRuntime:      return std::make_unique<MemoryDriver>(4); 
+        case UefiAutoSys:      return std::make_unique<MemoryDriver>(5); 
         default:               throw std::runtime_error("invalid backend");
     }
 }
@@ -108,12 +110,13 @@ int main() {
         printf("  2. User-space (indirect syscalls)    - slightly stealthier\n");
         printf("  3. Kernel driver kdmapper (IOCTL)    - requires admin + setup\n");
         printf("  4. UEFI BIOS Runtime (Singularity)   - stealthiest, bypasses VBS & AV\n");
+        printf("  5. UEFI Auto-.sys Load (Ring -2)     - autonomous driver injection via BIOS\n");
         printf("\n> ");
 
         int backend = -1;
         scanf_s("%d", &backend);
 
-        if (backend < 1 || backend > 4) {
+        if (backend < 1 || backend > 5) {
             printf("Invalid choice: %d\n", backend);
             continue;
         }
@@ -129,12 +132,21 @@ int main() {
             char c; scanf_s(" %c", &c, 1);
             if (c != 'y' && c != 'Y') continue;
         }
+        else if (backend == 5) {
+            printf("\n=== UEFI Auto-.sys Load Requirements ===\n");
+            printf("  - Run as Administrator\n");
+            printf("  - MemReaderKdmp.sys must be next to this .exe\n");
+            printf("  - Uses firmware environment variables (Ring -2 injection)\n");
+            printf("\n  Continue? (y/n): ");
+            char c; scanf_s(" %c", &c, 1);
+            if (c != 'y' && c != 'Y') continue;
+        }
 
         g_settings.memory_backend = backend;
     }
 
-    g_driver_backend_active = (g_settings.memory_backend == KernelDriver);
-    g_uefi_backend_active   = (g_settings.memory_backend == UefiRuntime);
+    g_driver_backend_active = (g_settings.memory_backend == KernelDriver || g_settings.memory_backend == UefiAutoSys);
+    g_uefi_backend_active   = (g_settings.memory_backend == UefiRuntime || g_settings.memory_backend == UefiAutoSys);
 
     try {
         g_memory = CreateMemoryBackend(static_cast<MemoryBackend>(g_settings.memory_backend));
@@ -159,7 +171,9 @@ int main() {
     printf("[+] Attached to cs2.exe (PID: %lu)\n", g_memory->get_pid());
     printf("[+] client.dll base: 0x%llX\n", (unsigned long long)g_memory->get_client_base());
 
-    if (g_uefi_backend_active) {
+    if (g_settings.memory_backend == 5) {
+        printf("[+] Using UEFI AUTO-.SYS LOAD (Ring -2) for memory reads\n");
+    } else if (g_uefi_backend_active) {
         printf("[+] Using STABLE UEFI BIOS RUNTIME (Singularity) for memory reads\n");
     } else if (g_driver_backend_active) {
         printf("[+] Using KERNEL DRIVER for memory reads\n");
@@ -251,7 +265,6 @@ int main() {
             g_aimbot_data.publish(af);
         }
 
-        // ВІДНОВЛЕНО: Повне оригінальне логування зміни карт
         if (state.local.observer_pawn != 0 && state.local.pawn != 0 && !state.map_name.empty() && state.map_name != "<empty>" && state.map_name != last_map_name) {
             printf("[+] Map change: %s -> %s\n", last_map_name.data(), state.map_name.data());
             last_map_name = state.map_name;
@@ -261,7 +274,6 @@ int main() {
             printf("[+] Bvh parsed\n");
         }
 
-        // ВІДНОВЛЕНО: Еталонні математичні індекси векторів напрямку огляду
         float fwd_x = state.view_matrix.m[2][0];
         float fwd_y = state.view_matrix.m[2][1];
         float fwd_z = state.view_matrix.m[2][2];
@@ -273,33 +285,33 @@ int main() {
         g_grenades.update(state.local.x, state.local.y, state.local.z, view_pitch_deg, view_yaw_deg, state.map_name);
 
         if (state.entity_list) {
-        if (++spec_tick >= 15) {
-    spec_tick = 0;
-    g_spectators.update(state.entity_list, state.local.pawn, state.local.controller);
+            if (++spec_tick >= 15) {
+                spec_tick = 0;
+                g_spectators.update(state.entity_list, state.local.pawn, state.local.controller);
+            }
+        }
+
+        ImDrawList* draw = ImGui::GetBackgroundDrawList();
+        for (int i = 1; i < EntityList::MAX_PLAYERS; i++) {
+            g_esp.draw_player(draw, state.players[i], state.local.team, g_overlay.width, g_overlay.height, i, state.local.is_scoped);
+        }
+
+        g_grenades.render_popups();
+        g_grenades.draw(draw, state.local.x, state.local.y, state.local.z, g_overlay.width, g_overlay.height);
+        g_radar.draw(draw, state.radar_players, EntityList::MAX_PLAYERS, state.local.x, state.local.y, state.local.yaw, state.local.team, state.map_scale, g_overlay.width, g_overlay.height);
+        g_spectators.draw(g_overlay.width);
+
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        Crosshair::Config xhair_cfg = {
+            g_settings.crosshair_enabled && g_settings.master_switch, g_settings.crosshair_shape, g_settings.crosshair_size, g_settings.crosshair_gap, g_settings.crosshair_thickness, float4_to_col(g_settings.crosshair_color), g_settings.crosshair_outline, g_settings.crosshair_outline_thickness, float4_to_col(g_settings.crosshair_outline_color), g_settings.crosshair_dot, g_settings.crosshair_dot_size,
+        };
+        g_crosshair.draw(fg, g_overlay.width, g_overlay.height, xhair_cfg);
+
+        g_overlay.end_frame(g_settings.use_vsync ? 1 : 0);
+        if (!g_settings.use_vsync) limit_frame(frame_start, g_settings.target_fps);
     }
-}
 
-ImDrawList* draw = ImGui::GetBackgroundDrawList();
-for (int i = 1; i < EntityList::MAX_PLAYERS; i++) {
-    g_esp.draw_player(draw, state.players[i], state.local.team, g_overlay.width, g_overlay.height, i, state.local.is_scoped);
-}
-
-g_grenades.render_popups();
-g_grenades.draw(draw, state.local.x, state.local.y, state.local.z, g_overlay.width, g_overlay.height);
-g_radar.draw(draw, state.radar_players, EntityList::MAX_PLAYERS, state.local.x, state.local.y, state.local.yaw, state.local.team, state.map_scale, g_overlay.width, g_overlay.height);
-g_spectators.draw(g_overlay.width);
-
-ImDrawList* fg = ImGui::GetForegroundDrawList();
-Crosshair::Config xhair_cfg = {
-    g_settings.crosshair_enabled && g_settings.master_switch, g_settings.crosshair_shape, g_settings.crosshair_size, g_settings.crosshair_gap, g_settings.crosshair_thickness, float4_to_col(g_settings.crosshair_color), g_settings.crosshair_outline, g_settings.crosshair_outline_thickness, float4_to_col(g_settings.crosshair_outline_color), g_settings.crosshair_dot, g_settings.crosshair_dot_size,
-};
-g_crosshair.draw(fg, g_overlay.width, g_overlay.height, xhair_cfg);
-
-g_overlay.end_frame(g_settings.use_vsync ? 1 : 0);
-if (!g_settings.use_vsync) limit_frame(frame_start, g_settings.target_fps);
-}
-
-printf("\n[*] Shutting down...\n");
-g_weapon_icons.shutdown(); g_overlay.shutdown(); cleanup_on_exit(); CoUninitialize();
-return 0;
+    printf("\n[*] Shutting down...\n");
+    g_weapon_icons.shutdown(); g_overlay.shutdown(); cleanup_on_exit(); CoUninitialize();
+    return 0;
 }
