@@ -15,7 +15,7 @@ const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
 class MemoryDriver : public IMemory {
 public:
     // Конструктор приймає тип бекенду:
-    // 1 - WinAPI, 2 - Syscalls, 3 - kdmapper, 4 - Постійні виклики UEFI, 5 - завантаження через mapper.exe
+    // 1 - WinAPI, 2 - Syscalls, 3 - kdmapper, 4 - Безпечний UEFI Command-Response, 5 - завантаження через mapper.exe
     explicit MemoryDriver(int backend_mode)
         : m_backend_mode(backend_mode), h_driver(INVALID_HANDLE_VALUE), pid(0) {}
 
@@ -48,6 +48,71 @@ public:
         return success;
     }
 
+    // === НОВІ МЕТОДИ ТЕСТУВАННЯ ВНУТРІШНЬОГО КАНАЛУ UEFI ДЛЯ РЕЖИМУ 4 ===
+    bool TestUefiInit(int* out_driver_size) const {
+        struct SINGULARITY_MEMORY_COMMAND {
+            int magic; int operation; unsigned long long data[10]; int size;
+        };
+        SINGULARITY_MEMORY_COMMAND cmd = { 0 };
+        cmd.magic = 0xDEADFADE;
+        cmd.operation = 1; // OP_INIT
+
+        DWORD cmd_size = sizeof(SINGULARITY_MEMORY_COMMAND);
+        if (GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
+            if (out_driver_size) *out_driver_size = cmd.size;
+            return true;
+        }
+        return false;
+    }
+
+    bool TestUefiWrite(const unsigned char* buffer_to_write, size_t size) const {
+        if (!buffer_to_write || size == 0 || size > 80) return false;
+
+        struct SINGULARITY_MEMORY_COMMAND {
+            int magic; int operation; unsigned long long data[10]; int size;
+        };
+        SINGULARITY_MEMORY_COMMAND cmd = { 0 };
+        cmd.magic = 0xDEADFADE;
+        cmd.operation = 2; // OP_WRITE_TEST
+        cmd.size = static_cast<int>(size);
+
+        memcpy(&cmd.data[0], buffer_to_write, size);
+
+        DWORD cmd_size = sizeof(SINGULARITY_MEMORY_COMMAND);
+        return GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size) != 0;
+    }
+
+    bool TestUefiRead(unsigned char* output_buffer, size_t size_to_read) const {
+        if (!output_buffer || size_to_read == 0 || size_to_read > 80) return false;
+
+        struct SINGULARITY_MEMORY_COMMAND {
+            int magic; int operation; unsigned long long data[10]; int size;
+        };
+        SINGULARITY_MEMORY_COMMAND cmd = { 0 };
+        cmd.magic = 0xDEADFADE;
+        cmd.operation = 3; // OP_READ_TEST
+        cmd.size = static_cast<int>(size_to_read);
+
+        DWORD cmd_size = sizeof(SINGULARITY_MEMORY_COMMAND);
+        if (GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
+            memcpy(output_buffer, &cmd.data[0], size_to_read);
+            return true;
+        }
+        return false;
+    }
+
+    bool TestUefiClear() const {
+        struct SINGULARITY_MEMORY_COMMAND {
+            int magic; int operation; unsigned long long data[10]; int size;
+        };
+        SINGULARITY_MEMORY_COMMAND cmd = { 0 };
+        cmd.magic = 0xDEADFADE;
+        cmd.operation = 4; // OP_CLEAR_TEST
+
+        DWORD cmd_size = sizeof(SINGULARITY_MEMORY_COMMAND);
+        return GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size) != 0;
+    }
+
     bool attach(const wchar_t* process_name) override {
         close();
 
@@ -68,12 +133,11 @@ public:
             ZeroMemory(&si, sizeof(si));
             si.cb = sizeof(si);
             si.dwFlags = STARTF_USESHOWWINDOW;
-            si.wShowWindow = SW_HIDE; // Запуск відбувається у фоновому режимі
+            si.wShowWindow = SW_HIDE; 
 
             char cmd_line[] = "mapper.exe MemReaderKdmp.sys";
 
             if (CreateProcessA(NULL, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-                // Очікуємо завершення роботи утиліти до 5 секунд
                 WaitForSingleObject(pi.hProcess, 5000);
                 CloseHandle(pi.hProcess);
                 CloseHandle(pi.hThread);
@@ -83,7 +147,6 @@ public:
                 return false;
             }
 
-            // Рівно такий самий підключення до створеного пристрою, як у режимі 3
             h_driver = CreateFileW(L"\\\\.\\MemReaderKdmp", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (h_driver == INVALID_HANDLE_VALUE) {
                 printf("[DEBUG ERROR] Failed to connect to MemReaderKdmp driver handle!\n");
@@ -99,7 +162,6 @@ public:
         pid = find_process(process_name);
         if (!pid) return false;
 
-        // Перевірка модулів працює абсолютно однаково для Режимів 3 та 5
         m_modules.client = query_module_base(L"client.dll", &m_modules.client_size);
         if (!m_modules.client) return false;
         
@@ -130,7 +192,6 @@ public:
             BOOL status = ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(address), buffer, size, &bytes_read);
             return status && (bytes_read == size);
         }
-        // РЕЖИМ 3 ТА 5 ОДНАКОВО читають дані через IOCTL хендл нашого драйвера ядра
         else if (m_backend_mode == 3 || m_backend_mode == 5) {
             if (h_driver == INVALID_HANDLE_VALUE) return false;
             READ_MEMORY_REQUEST request{};
@@ -140,19 +201,30 @@ public:
             DWORD returned = 0;
             return DeviceIoControl(h_driver, IOCTL_READ_MEMORY, &request, sizeof(request), buffer, static_cast<DWORD>(size), &returned, nullptr);
         }
+        // ОНОВЛЕНИЙ ЧИСТИЙ І БЕЗПЕЧНИЙ РЕЖИМ 4 ЧЕРЕЗ GET-ТРАНЗИТ (БЕЗ ЖОДНИХ BSODІВ!)
         else if (m_backend_mode == 4) {
             struct SINGULARITY_MEMORY_COMMAND {
                 int magic; int operation; unsigned long long data[10]; int size;
             };
             SINGULARITY_MEMORY_COMMAND cmd{};
-            cmd.magic = 0xDEADFADE; cmd.operation = 0;
-            cmd.data[0] = reinterpret_cast<unsigned long long>(buffer);
-            cmd.data[1] = static_cast<unsigned long long>(address);
+            cmd.magic = 0xDEADFADE; 
+            cmd.operation = 0; // Наш апаратний перекладач у BIOS
+
+            // Заповнюємо структуру симетрично до SingularityDxe.c
+            cmd.data[0] = static_cast<unsigned long long>(pid);     // Передаємо PID гри CS2
+            cmd.data[1] = static_cast<unsigned long long>(address); // Передаємо віртуальну адресу CS2
             cmd.size = static_cast<int>(size);
 
-            BOOL status = SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, sizeof(cmd));
-            _mm_pause();
-            return status;
+            DWORD cmd_size = sizeof(SINGULARITY_MEMORY_COMMAND);
+            
+            // Викликаємо безпечний пасивний Get. Windows маршурутизує структуру в BIOS, 
+            // BIOS виконує Walk, записує байти прямо всередину cmd.data[0], і повертає структуру нам!
+            if (GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
+                // Копіюємо готові координати з безпечного поля структури в буфер читу
+                RtlCopyMemory(buffer, &cmd.data[0], size);
+                return true;
+            }
+            return false;
         }
         return false;
     }
@@ -166,16 +238,14 @@ private:
     int       m_backend_mode;
     struct {
         uintptr_t client;          size_t client_size;
-        uintptr_t engine2;         size_t engine2_size;
-        uintptr_t schemasystem;    size_t schemasystem_size;
-        uintptr_t tier0;           size_t tier0_size;
-        uintptr_t vphysics2;       size_t vphysics2_size;
+uintptr_t engine2;         size_t engine2_size;
+    uintptr_t schemasystem;    size_t schemasystem_size;
+    uintptr_t tier0;           size_t tier0_size;
+    uintptr_t vphysics2;       size_t vphysics2_size;
     } m_modules;
 
     uintptr_t query_module_base(const wchar_t* module_name, size_t* out_size) const {
         if (!pid) return 0;
-        
-        // Режими 3 та 5 використовують спільну логіку для запиту баз модулів гри
         if (m_backend_mode == 3 || m_backend_mode == 5) {
             if (h_driver == INVALID_HANDLE_VALUE) return 0;
             MODULE_BASE_REQUEST request{}; request.target_pid = pid;
@@ -188,7 +258,6 @@ private:
             }
             return 0;
         }
-
         uintptr_t base_addr = 0;
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
         if (snapshot != INVALID_HANDLE_VALUE) {
