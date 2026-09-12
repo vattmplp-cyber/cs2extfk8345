@@ -33,8 +33,9 @@ static_assert(sizeof(SINGULARITY_MEMORY_COMMAND) == 96,
 #define SING_OP_WRITE_TEST 0x02
 #define SING_OP_READ_TEST  0x03
 #define SING_OP_CLEAR_TEST 0x04
-#define SING_OP_FIND_PROC  0x10
 #define SING_OP_CALL_ENTRY 0x05
+#define SING_OP_FIND_PROC  0x10
+#define SING_OP_READ_CR3   0x11   // ← ДОДАНО: mode 4 read через CR3
 
 class MemoryDriver : public IMemory {
 public:
@@ -270,7 +271,7 @@ public:
 
                 SINGULARITY_MEMORY_COMMAND cmd{};
                 cmd.magic     = 0xDEADFADE;
-                cmd.operation = SING_OP_READ;
+                cmd.operation = SING_OP_READ_CR3;   // ← ВИПРАВЛЕНО: було SING_OP_READ
                 cmd.data[0]   = reinterpret_cast<unsigned long long>(dst + done);       // куди писати
                 cmd.data[1]   = static_cast<unsigned long long>(address + done);        // звідки читати
                 cmd.size      = static_cast<int>(chunk);
