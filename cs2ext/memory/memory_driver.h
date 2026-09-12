@@ -27,15 +27,15 @@ struct SINGULARITY_MEMORY_COMMAND {
 static_assert(sizeof(SINGULARITY_MEMORY_COMMAND) == 96,
               "SingularityDxe MemoryCommand size mismatch!");
 
-// Операції (мають збігатися з .efi)
+// Операції (мають повністю збігатися з .efi драйвером)
 #define SING_OP_READ       0x00
 #define SING_OP_INIT       0x01
 #define SING_OP_WRITE_TEST 0x02
 #define SING_OP_READ_TEST  0x03
 #define SING_OP_CLEAR_TEST 0x04
 #define SING_OP_CALL_ENTRY 0x05
-#define SING_OP_FIND_PROC  0x10
-#define SING_OP_READ_CR3   0x11   // ← ДОДАНО: mode 4 read через CR3
+#define SING_OP_SET_CR3    0x10   // Передача готового CR3 в UEFI
+#define SING_OP_READ_CR3   0x11   // Читання пам'яті через CR3
 
 class MemoryDriver : public IMemory {
 public:
@@ -70,9 +70,6 @@ public:
         return success;
     }
 
-    // ------------------------------------------------------------
-    //  Діагностика UEFI-каналу (не критично для роботи)
-    // ------------------------------------------------------------
     bool TestUefiInit(int* out_driver_size) const {
         SINGULARITY_MEMORY_COMMAND cmd{};
         cmd.magic     = 0xDEADFADE;
@@ -84,47 +81,6 @@ public:
             return true;
         }
         return false;
-    }
-
-    bool TestUefiWrite(const unsigned char* buffer_to_write, size_t size) const {
-        if (!buffer_to_write || size == 0 || size > sizeof(SINGULARITY_MEMORY_COMMAND::data))
-            return false;
-
-        SINGULARITY_MEMORY_COMMAND cmd{};
-        cmd.magic     = 0xDEADFADE;
-        cmd.operation = SING_OP_WRITE_TEST;
-        cmd.size      = static_cast<int>(size);
-        memcpy(&cmd.data[0], buffer_to_write, size);
-
-        DWORD cmd_size = sizeof(cmd);
-        return GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size) != 0;
-    }
-
-    bool TestUefiRead(unsigned char* output_buffer, size_t size_to_read) const {
-        if (!output_buffer || size_to_read == 0 ||
-            size_to_read > sizeof(SINGULARITY_MEMORY_COMMAND::data))
-            return false;
-
-        SINGULARITY_MEMORY_COMMAND cmd{};
-        cmd.magic     = 0xDEADFADE;
-        cmd.operation = SING_OP_READ_TEST;
-        cmd.size      = static_cast<int>(size_to_read);
-
-        DWORD cmd_size = sizeof(cmd);
-        if (GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
-            memcpy(output_buffer, &cmd.data[0], size_to_read);
-            return true;
-        }
-        return false;
-    }
-
-    bool TestUefiClear() const {
-        SINGULARITY_MEMORY_COMMAND cmd{};
-        cmd.magic     = 0xDEADFADE;
-        cmd.operation = SING_OP_CLEAR_TEST;
-
-        DWORD cmd_size = sizeof(cmd);
-        return GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size) != 0;
     }
 
     // ------------------------------------------------------------
@@ -171,37 +127,37 @@ public:
                 printf("[DEBUG ERROR] Failed to connect to MemReaderKdmp!\n");
                 return false;
             }
-            printf("[DEBUG SUCCESS] MemReaderKdmp active via mapper.exe!\n");
         }
         else if (m_backend_mode == 4) {
             printf("[DEBUG] UEFI Mode 4: enabling SeSystemEnvironmentPrivilege...\n");
             if (!EnableSystemEnvironmentPrivilege()) {
-                printf("[DEBUG WARN] Failed to enable SeSystemEnvironmentPrivilege — "
-                       "run as admin.\n");
+                printf("[DEBUG WARN] Failed to enable SeSystemEnvironmentPrivilege — run as admin.\n");
             }
         }
 
         pid = find_process(process_name);
         if (!pid) return false;
 
-        // ---- Mode 4: просимо UEFI знайти CR3 CS2 (сканування RAM) ----
+        // ---- Mode 4: Передача CR3 у UEFI драйвер ----
         if (m_backend_mode == 4) {
+            // Увага: сюди треба передати реальний CR3 цільового процесу (наприклад, з чорного ящика або твого іншого драйвера).
+            // Зараз тут варто переконатися, що ти передаєш правильне значення змінної CR3.
+            unsigned long long process_cr3 = 0; // ← Сюди треба підставити отриманий CR3 процесу
+
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic     = 0xDEADFADE;
-            cmd.operation = SING_OP_FIND_PROC;
-            cmd.data[0]   = static_cast<unsigned long long>(pid);
+            cmd.operation = SING_OP_SET_CR3;
+            cmd.data[0]   = process_cr3; 
 
             DWORD cmd_size = sizeof(cmd);
-            printf("[DEBUG] Mode 4: asking UEFI to locate PID=%u "
-                   "(may take 1-3 seconds)...\n", pid);
+            printf("[DEBUG] Mode 4: Setting CR3 in UEFI for PID=%u...\n", pid);
 
             if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
                                                  &cmd, cmd_size)) {
-                printf("[DEBUG ERROR] Mode 4: UEFI could not locate PID %u in RAM!\n", pid);
-                printf("        Check COM1 log for 'EPROCESS @ PA ...'\n");
+                printf("[DEBUG ERROR] Mode 4: Failed to set CR3 in UEFI!\n");
                 return false;
             }
-            printf("[DEBUG SUCCESS] Mode 4: CS2 CR3 cached in UEFI. Ready.\n");
+            printf("[DEBUG SUCCESS] Mode 4: CR3 set successfully. Ready.\n");
         }
 
         m_modules.client = query_module_base(L"client.dll", &m_modules.client_size);
@@ -258,9 +214,8 @@ public:
                                    buffer, static_cast<DWORD>(size),
                                    &returned, nullptr);
         }
-        // ---- Mode 4: чистий UEFI read через кешований CR3 ----
+        // ---- Mode 4: чистий UEFI read через CR3 ----
         else if (m_backend_mode == 4) {
-            // Обмеження одного виклику — 1 МБ. Більше — ріжемо на частини.
             constexpr size_t MAX_CHUNK = 0x100000;  // 1 MB
 
             size_t done = 0;
@@ -271,9 +226,9 @@ public:
 
                 SINGULARITY_MEMORY_COMMAND cmd{};
                 cmd.magic     = 0xDEADFADE;
-                cmd.operation = SING_OP_READ_CR3;   // ← ВИПРАВЛЕНО: було SING_OP_READ
-                cmd.data[0]   = reinterpret_cast<unsigned long long>(dst + done);       // куди писати
-                cmd.data[1]   = static_cast<unsigned long long>(address + done);        // звідки читати
+                cmd.operation = SING_OP_READ_CR3;
+                cmd.data[0]   = reinterpret_cast<unsigned long long>(dst + done);
+                cmd.data[1]   = static_cast<unsigned long long>(address + done);
                 cmd.size      = static_cast<int>(chunk);
 
                 DWORD cmd_size = sizeof(cmd);
