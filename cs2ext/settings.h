@@ -56,6 +56,7 @@ struct MenuSettings {
     bool radar_circle = true;
     bool radar_rings = false;
     bool radar_names = false;
+    bool radar_hide_spotted = true; // За замовчуванням ховати, якщо помічений
     float radar_names_font_size = 11.0f;
     float radar_bg_alpha = 0.0f;
     float radar_enemy_color[4] = {1.00f, 0.30f, 0.30f, 0.90f};
