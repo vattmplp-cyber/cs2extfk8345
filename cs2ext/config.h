@@ -44,6 +44,15 @@ public:
         write(f, "name_shadow", g_settings.name_shadow);
         write(f, "name_font_size", g_settings.name_font_size);
 
+        // У методі збереження (save):
+        f << "\n[Radar]\n";
+        write(f, "radar_enabled", g_settings.radar.enabled);
+        write(f, "radar_x", g_settings.radar.x);
+        write(f, "radar_y", g_settings.radar.y);
+        write(f, "radar_size", g_settings.radar.size);
+        write(f, "radar_range", g_settings.radar.range);
+        write(f, "radar_aspect_ratio", g_settings.radar.aspect_ratio); // Зберігаємо
+
         f << "\n[HealthText]\n";
         write_arr(f, "hp_text_color", g_settings.hp_text_color, 4);
         write_arr(f, "hp_text_shadow_color", g_settings.hp_text_shadow_color, 4);
@@ -208,6 +217,14 @@ public:
         read(kv, "draw_head", g_settings.draw_head);
         read(kv, "chams_style", g_settings.chams_style);
         read(kv, "esp_font_index", g_settings.esp_font_index);
+
+        // У методі завантаження (load):
+        read(kv, "radar_enabled", g_settings.radar.enabled);
+        read(kv, "radar_x", g_settings.radar.x);
+        read(kv, "radar_y", g_settings.radar.y);
+        read(kv, "radar_size", g_settings.radar.size);
+        read(kv, "radar_range", g_settings.radar.range);
+        read(kv, "radar_aspect_ratio", g_settings.radar.aspect_ratio); // Завантажуємо
 
         read(kv, "name_position", g_settings.name_position);
         read(kv, "name_offset_x", g_settings.name_offset_x);
