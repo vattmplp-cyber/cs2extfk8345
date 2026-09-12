@@ -58,17 +58,20 @@ void draw(ImDrawList* draw, const RadarPlayer* players, int count,
         float scale_x = half_x / range;
         float scale_y = half_y / range;
 
-        for (int i = 0; i < count; i++) {
+       for (int i = 0; i < count; i++) {
             if (!players[i].valid || players[i].health <= 0) continue;
 
             bool enemy = (players[i].team != local_team);
             if (players[i].is_spotted) continue;
             if (!enemy && !g_settings.draw_teammates) continue;
 
+            // 1. Отримуємо відносні координати у світових одиницях
             float dx = players[i].x - local_x;
             float dy = players[i].y - local_y;
-            
+
             float rot_x, rot_y;
+
+            // 2. Обертання відносно огляду камери
             if (g_settings.radar_rotate) {
                 rot_x = dx * cos_y + dy * sin_y;
                 rot_y = -dx * sin_y + dy * cos_y;
@@ -77,9 +80,13 @@ void draw(ImDrawList* draw, const RadarPlayer* players, int count,
                 rot_y = -dy;
             }
 
-            float px = cx + rot_x * scale_x;
-            float py = cy - rot_y * scale_y;
+            // 3. Єдиний базовий Scale для кругового обертання + Aspect Ratio лише на X
+            float base_scale = half_y / range;
+            
+            float px = cx + (rot_x * base_scale * g_settings.radar_aspect_ratio);
+            float py = cy - (rot_y * base_scale);
 
+            // 4. Перевірка на вихід за межі радара (Clamping)
             float off_x = (px - cx) / half_x;
             float off_y = (py - cy) / half_y;
             float dist_sq = off_x * off_x + off_y * off_y;
@@ -95,6 +102,7 @@ void draw(ImDrawList* draw, const RadarPlayer* players, int count,
                 py = std::clamp(py, ry + 4.0f, ry + size_y - 4.0f);
             }
 
+            // 5. Малювання точок гравців
             ImU32 col = enemy
                             ? float4_to_col(g_settings.radar_enemy_color)
                             : float4_to_col(g_settings.radar_team_color);
