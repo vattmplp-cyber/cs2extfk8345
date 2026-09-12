@@ -883,6 +883,10 @@ private:
             ImGui::SetTooltip("Stretch or squeeze radar horizontally for custom resolutions");
         // -----------------------------
 
+        ImGui::Checkbox("Hide if Spotted", &g_settings.radar_hide_spotted);
+if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Hide ESP marker when player is visible on standard in-game radar");
+
         ImGui::Separator();
 
         ImGui::Checkbox(
