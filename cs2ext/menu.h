@@ -88,14 +88,6 @@ public:
                 ImGui::EndTabItem();
             }
 
-            ImGui::SliderFloat(
-            "Aspect Ratio",
-            &g_settings.radar_aspect_ratio,
-            0.5f,
-            2.0f,
-            "%.2f"
-            );
-
             if (ImGui::BeginTabItem("Aim")) {
                 render_tab_aim();
                 ImGui::EndTabItem();
@@ -878,6 +870,18 @@ private:
             "Show Radar",
             &g_settings.draw_radar
         );
+
+        // --- ОСЬ СЮДИ ВСТАВЛЯЄМО: ---
+        ImGui::SliderFloat(
+            "Aspect Ratio",
+            &g_settings.radar_aspect_ratio,
+            0.5f,
+            2.0f,
+            "%.2f"
+        );
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Stretch or squeeze radar horizontally for custom resolutions");
+        // -----------------------------
 
         ImGui::Separator();
 
