@@ -138,26 +138,22 @@ public:
         pid = find_process(process_name);
         if (!pid) return false;
 
-        // ---- Mode 4: Передача CR3 у UEFI драйвер ----
+        // ---- Mode 4: Передача PID у UEFI для пошуку CR3 ----
         if (m_backend_mode == 4) {
-            // Увага: сюди треба передати реальний CR3 цільового процесу (наприклад, з чорного ящика або твого іншого драйвера).
-            // Зараз тут варто переконатися, що ти передаєш правильне значення змінної CR3.
-            unsigned long long process_cr3 = 0; // ← Сюди треба підставити отриманий CR3 процесу
-
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic     = 0xDEADFADE;
             cmd.operation = SING_OP_SET_CR3;
-            cmd.data[0]   = process_cr3; 
+            cmd.data[0]   = static_cast<unsigned long long>(pid); // Передаємо PID
 
             DWORD cmd_size = sizeof(cmd);
-            printf("[DEBUG] Mode 4: Setting CR3 in UEFI for PID=%u...\n", pid);
+            printf("[DEBUG] Mode 4: Sending PID=%u to UEFI for CR3 resolution...\n", pid);
 
             if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
                                                  &cmd, cmd_size)) {
-                printf("[DEBUG ERROR] Mode 4: Failed to set CR3 in UEFI!\n");
+                printf("[DEBUG ERROR] Mode 4: Failed to communicate with UEFI!\n");
                 return false;
             }
-            printf("[DEBUG SUCCESS] Mode 4: CR3 set successfully. Ready.\n");
+            printf("[DEBUG SUCCESS] Mode 4: UEFI resolved CR3 successfully. Ready.\n");
         }
 
         m_modules.client = query_module_base(L"client.dll", &m_modules.client_size);
