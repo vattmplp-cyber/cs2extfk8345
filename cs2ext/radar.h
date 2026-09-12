@@ -60,15 +60,16 @@ public:
             if (players[i].is_spotted) continue;
             if (!enemy && !g_settings.draw_teammates) continue;
 
+            // Ось ці два рядки обов'язково мають бути тут:
             float dx = players[i].x - local_x;
             float dy = players[i].y - local_y;
-
+            
             float rot_x, rot_y;
             if (g_settings.radar_rotate) {
-                rot_x = dx * cos_y + dy * sin_y;
+                rot_x = (dx * cos_y + dy * sin_y) * g_settings.radar_aspect_ratio; // Додали множення в дужках
                 rot_y = -dx * sin_y + dy * cos_y;
             } else {
-                rot_x = dx;
+                rot_x = dx * g_settings.radar_aspect_ratio; // Додали множення тут
                 rot_y = -dy;
             }
 
