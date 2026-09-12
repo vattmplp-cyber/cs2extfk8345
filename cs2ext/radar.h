@@ -62,7 +62,7 @@ void draw(ImDrawList* draw, const RadarPlayer* players, int count,
             if (!players[i].valid || players[i].health <= 0) continue;
 
             bool enemy = (players[i].team != local_team);
-            if (players[i].is_spotted) continue;
+            if (g_settings.radar_hide_spotted && players[i].is_spotted) continue;
             if (!enemy && !g_settings.draw_teammates) continue;
 
             // 1. Отримуємо відносні координати у світових одиницях
