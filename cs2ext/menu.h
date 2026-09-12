@@ -88,6 +88,14 @@ public:
                 ImGui::EndTabItem();
             }
 
+            ImGui::SliderFloat(
+            "Aspect Ratio",
+            &g_settings.radar_aspect_ratio,
+            0.5f,
+            2.0f,
+            "%.2f"
+            );
+
             if (ImGui::BeginTabItem("Aim")) {
                 render_tab_aim();
                 ImGui::EndTabItem();
