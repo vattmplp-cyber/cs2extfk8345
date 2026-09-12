@@ -61,6 +61,10 @@ struct MenuSettings {
     float radar_enemy_color[4] = {1.00f, 0.30f, 0.30f, 0.90f};
     float radar_team_color[4]  = {0.30f, 0.55f, 1.00f, 0.90f};
     float radar_aspect_ratio = 1.0f;
+    int native_res_w = 1920;
+    int native_res_h = 1080;
+    int game_res_w = 1080;
+    int game_res_h = 1080;
 
     int box_style = 0;
     float box_thickness = 1.5f;
