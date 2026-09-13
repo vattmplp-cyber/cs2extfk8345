@@ -226,18 +226,18 @@ public:
 
                 DWORD cmd_size = sizeof(cmd);
                 
-                // 1. Надсилаємо запит у UEFI (режим Set)
+                // 1. Надсилаємо запит у UEFI
                 if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
                     return false;
                 }
 
-                // 2. Отримуємо відповідь із заповненими даними з UEFI (режим Get)
+                // 2. Отримуємо заповнену структуру назад із UEFI
                 DWORD get_size = sizeof(cmd);
                 if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, get_size)) {
                     return false;
                 }
 
-                // Копіюємо з отриманого буфера відповіді назад у клієнтський масив (виправляємо також одрук на uint8_t)
+                // Копіюємо з буфера відповіді назад у клієнтський масив (використовуємо uint8_t)
                 std::memcpy(dst + done, reinterpret_cast<const uint8_t*>(&cmd.data[2]), chunk);
                 done += chunk;
             }
