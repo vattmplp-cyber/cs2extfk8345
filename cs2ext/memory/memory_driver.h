@@ -210,6 +210,7 @@ public:
                                    buffer, static_cast<DWORD>(size),
                                    &returned, nullptr);
         }
+            
 // ---- Mode 4: чистий UEFI read через CR3 ----
         else if (m_backend_mode == 4) {
             size_t done = 0;
@@ -226,18 +227,18 @@ public:
 
                 DWORD cmd_size = sizeof(cmd);
                 
-                // 1. Надсилаємо запит у UEFI
+                // 1. Надсилаємо запит в UEFI
                 if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
                     return false;
                 }
 
-                // 2. Отримуємо заповнену структуру назад із UEFI
+                // 2. Отримуємо заповнені дані назад із UEFI через Get
                 DWORD get_size = sizeof(cmd);
                 if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, get_size)) {
                     return false;
                 }
 
-                // Копіюємо з буфера відповіді назад у клієнтський масив (використовуємо uint8_t)
+                // Копіюємо з отриманого буфера відповіді у клієнтський масив
                 std::memcpy(dst + done, reinterpret_cast<const uint8_t*>(&cmd.data[2]), chunk);
                 done += chunk;
             }
