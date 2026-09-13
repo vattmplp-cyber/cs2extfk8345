@@ -76,7 +76,7 @@ public:
         cmd.operation = SING_OP_INIT;
 
         DWORD cmd_size = sizeof(cmd);
-        if (GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
+        if (SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
             if (out_driver_size) *out_driver_size = cmd.size;
             return true;
         }
@@ -148,7 +148,7 @@ public:
             DWORD cmd_size = sizeof(cmd);
             printf("[DEBUG] Mode 4: Sending PID=%u to UEFI for CR3 resolution...\n", pid);
 
-            if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
+            if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
                                                  &cmd, cmd_size)) {
                 printf("[DEBUG ERROR] Mode 4: Failed to communicate with UEFI!\n");
                 return false;
@@ -228,7 +228,7 @@ public:
                 cmd.size      = static_cast<int>(chunk);
 
                 DWORD cmd_size = sizeof(cmd);
-                if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
+                if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
                                                      &cmd, cmd_size)) {
                     return false;
                 }
