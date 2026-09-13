@@ -210,7 +210,7 @@ public:
                                    buffer, static_cast<DWORD>(size),
                                    &returned, nullptr);
         }
-        // ---- Mode 4: чистий UEFI read через CR3 ----
+// ---- Mode 4: чистий UEFI read через CR3 ----
         else if (m_backend_mode == 4) {
             size_t done = 0;
             uint8_t* dst = reinterpret_cast<uint8_t*>(buffer);
@@ -225,12 +225,20 @@ public:
                 cmd.size      = static_cast<int>(chunk);
 
                 DWORD cmd_size = sizeof(cmd);
+                
+                // 1. Надсилаємо запит у UEFI (режим Set)
                 if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
                     return false;
                 }
 
-                // Копіюємо з буфера відповіді назад у клієнтський масив
-                std::memcpy(dst + done, reinterpret_cast<uint8_1*>(&cmd.data[2]), chunk);
+                // 2. Отримуємо відповідь із заповненими даними з UEFI (режим Get)
+                DWORD get_size = sizeof(cmd);
+                if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, get_size)) {
+                    return false;
+                }
+
+                // Копіюємо з отриманого буфера відповіді назад у клієнтський масив (виправляємо також одрук на uint8_t)
+                std::memcpy(dst + done, reinterpret_cast<const uint8_t*>(&cmd.data[2]), chunk);
                 done += chunk;
             }
             return true;
