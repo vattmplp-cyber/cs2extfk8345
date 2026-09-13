@@ -211,8 +211,16 @@ public:
                                    &returned, nullptr);
         }
             
-// ---- Mode 4: чистий UEFI read через CR3 ----
+// ---- Mode 4: чистий UEFI read через CR3 (ліміт 200 мс / ~5 FPS) ----
         else if (m_backend_mode == 4) {
+            static ULONGLONG last_fetch_time = 0;
+            ULONGLONG current_time = GetTickCount64();
+            
+            if (current_time - last_fetch_time < 200) {
+                Sleep(200 - static_cast<DWORD>(current_time - last_fetch_time));
+            }
+            last_fetch_time = GetTickCount64();
+
             size_t done = 0;
             uint8_t* dst = reinterpret_cast<uint8_t*>(buffer);
 
@@ -227,18 +235,15 @@ public:
 
                 DWORD cmd_size = sizeof(cmd);
                 
-                // 1. Надсилаємо запит в UEFI
                 if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
                     return false;
                 }
 
-                // 2. Отримуємо заповнені дані назад із UEFI через Get
                 DWORD get_size = sizeof(cmd);
                 if (!GetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, get_size)) {
                     return false;
                 }
 
-                // Копіюємо з отриманого буфера відповіді у клієнтський масив
                 std::memcpy(dst + done, reinterpret_cast<const uint8_t*>(&cmd.data[2]), chunk);
                 done += chunk;
             }
