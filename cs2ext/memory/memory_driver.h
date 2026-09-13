@@ -212,27 +212,25 @@ public:
         }
         // ---- Mode 4: чистий UEFI read через CR3 ----
         else if (m_backend_mode == 4) {
-            constexpr size_t MAX_CHUNK = 0x100000;  // 1 MB
-
             size_t done = 0;
             uint8_t* dst = reinterpret_cast<uint8_t*>(buffer);
 
             while (done < size) {
-                size_t chunk = (size - done) > MAX_CHUNK ? MAX_CHUNK : (size - done);
+                size_t chunk = (size - done) > 64 ? 64 : (size - done);
 
                 SINGULARITY_MEMORY_COMMAND cmd{};
                 cmd.magic     = 0xDEADFADE;
                 cmd.operation = SING_OP_READ_CR3;
-                cmd.data[0]   = reinterpret_cast<unsigned long long>(dst + done);
                 cmd.data[1]   = static_cast<unsigned long long>(address + done);
                 cmd.size      = static_cast<int>(chunk);
 
                 DWORD cmd_size = sizeof(cmd);
-                if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
-                                                     &cmd, cmd_size)) {
+                if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID, &cmd, cmd_size)) {
                     return false;
                 }
 
+                // Копіюємо з буфера відповіді назад у клієнтський масив
+                std::memcpy(dst + done, reinterpret_cast<uint8_1*>(&cmd.data[2]), chunk);
                 done += chunk;
             }
             return true;
