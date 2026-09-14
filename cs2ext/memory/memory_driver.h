@@ -12,7 +12,6 @@
 #include <winternl.h>
 #include <vector>
 
-// Необхідні структури для легітимного запиту великих пулів ядра Windows
 typedef enum _SYSTEM_INFORMATION_CLASS_EXT {
     SystemBigPoolInformation = 0x42
 } SYSTEM_INFORMATION_CLASS_EXT;
@@ -31,16 +30,13 @@ typedef struct _SYSTEM_BIGPOOL_INFORMATION {
     SYSTEM_BIGPOOL_ENTRY AllocatedInfo[1];
 } SYSTEM_BIGPOOL_INFORMATION, *PSYSTEM_BIGPOOL_INFORMATION;
 
-// Автоматичне динамічне визначення KASLR маски вашої Windows при кожному запуску
+// Точна базова маска Direct Map для Windows 10 x64
 unsigned long long GetWindowsPhysicalMask() {
     return 0xffffa08000000000ULL; 
 }
 
 const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
 
-// ============================================================
-//  Сумісна структура. Layout: 96 байт (як у EDK2 x64).
-// ============================================================
 #pragma pack(push, 8)
 struct SINGULARITY_MEMORY_COMMAND {
     int                magic;
@@ -53,15 +49,14 @@ struct SINGULARITY_MEMORY_COMMAND {
 static_assert(sizeof(SINGULARITY_MEMORY_COMMAND) == 96,
               "SingularityDxe MemoryCommand size mismatch!");
 
-// Операції (мають повністю збігатися з .efi драйвером)
 #define SING_OP_READ       0x00
 #define SING_OP_INIT       0x01
 #define SING_OP_WRITE_TEST 0x02
 #define SING_OP_READ_TEST  0x03
 #define SING_OP_CLEAR_TEST 0x04
 #define SING_OP_CALL_ENTRY 0x05
-#define SING_OP_SET_CR3    0x10   // Передача готового CR3 в UEFI
-#define SING_OP_READ_CR3   0x11   // Читання пам'яті через CR3
+#define SING_OP_SET_CR3    0x10
+#define SING_OP_READ_CR3   0x11
 
 class MemoryDriver : public IMemory {
 public:
@@ -109,9 +104,6 @@ public:
         return false;
     }
 
-    // ------------------------------------------------------------
-    //  attach
-    // ------------------------------------------------------------
     bool attach(const wchar_t* process_name) override {
         close();
 
@@ -164,13 +156,12 @@ public:
         pid = find_process(process_name);
         if (!pid) return false;
 
-        // ---- Mode 4: Передача PID та маски KASLR у UEFI для пошуку CR3 ----
         if (m_backend_mode == 4) {
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic     = 0xDEADFADE;
             cmd.operation = SING_OP_SET_CR3;
-            cmd.data[0]   = static_cast<unsigned long long>(pid); // Передаємо PID
-            cmd.data[1]   = GetWindowsPhysicalMask();             // <-- НОВИЙ РЯДОК: Передаємо маску KASLR!
+            cmd.data[0]   = static_cast<unsigned long long>(pid);
+            cmd.data[1]   = GetWindowsPhysicalMask();
 
             DWORD cmd_size = sizeof(cmd);
             printf("[DEBUG] Mode 4: Sending PID=%u and Mask=0x%llx to UEFI...\n", pid, cmd.data[1]);
@@ -203,9 +194,6 @@ public:
         m_modules = {};
     }
 
-    // ------------------------------------------------------------
-    //  read_raw
-    // ------------------------------------------------------------
     bool read_raw(uintptr_t address, void* buffer, size_t size) const override {
         if (!pid || !buffer || size == 0) return false;
 
@@ -237,8 +225,6 @@ public:
                                    buffer, static_cast<DWORD>(size),
                                    &returned, nullptr);
         }
-            
-// ---- Mode 4: чистий UEFI read через CR3 (ліміт 200 мс / ~5 FPS) ----
         else if (m_backend_mode == 4) {
             static ULONGLONG last_fetch_time = 0;
             ULONGLONG current_time = GetTickCount64();
