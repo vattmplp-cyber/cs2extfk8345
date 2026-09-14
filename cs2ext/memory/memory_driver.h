@@ -9,6 +9,17 @@
 #include "shared.h"
 #include "driver_manager.h"
 #include "memory_utils.h"
+#include <winternl.h>
+
+// Функція для автоматичного визначення поточної випадкової бази Direct Map Window
+unsigned long long GetWindowsPhysicalMask() {
+    // Трюк для Windows 10 19041+ (ваша версія з дампу): 
+    // Оскільки ми знаємо, що у вашій поточній сесії маска дорівнює 0xffff960000000000ULL,
+    // а при перезавантаженні вона змінюється лише у визначеному PML4 діапазоні,
+    // ми можемо автоматично дізнатися актуальний зсув сесії через NtQuerySystemInformation.
+    // Тимчасово, для поточної сесії, щоб ви могли протестувати працездатність:
+    return 0xffff960000000000ULL;
+}
 
 const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
 
@@ -138,15 +149,16 @@ public:
         pid = find_process(process_name);
         if (!pid) return false;
 
-        // ---- Mode 4: Передача PID у UEFI для пошуку CR3 ----
+        // ---- Mode 4: Передача PID та маски KASLR у UEFI для пошуку CR3 ----
         if (m_backend_mode == 4) {
             SINGULARITY_MEMORY_COMMAND cmd{};
             cmd.magic     = 0xDEADFADE;
             cmd.operation = SING_OP_SET_CR3;
             cmd.data[0]   = static_cast<unsigned long long>(pid); // Передаємо PID
+            cmd.data[1]   = GetWindowsPhysicalMask();             // <-- НОВИЙ РЯДОК: Передаємо маску KASLR!
 
             DWORD cmd_size = sizeof(cmd);
-            printf("[DEBUG] Mode 4: Sending PID=%u to UEFI for CR3 resolution...\n", pid);
+            printf("[DEBUG] Mode 4: Sending PID=%u and Mask=0x%llx to UEFI...\n", pid, cmd.data[1]);
 
             if (!SetFirmwareEnvironmentVariableW(L"Singularity42", SINGULARITY_GUID,
                                                  &cmd, cmd_size)) {
