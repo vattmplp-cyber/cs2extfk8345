@@ -32,7 +32,7 @@ typedef struct _SYSTEM_BIGPOOL_INFORMATION {
 
 // Точна базова маска Direct Map для Windows 10 x64
 unsigned long long GetWindowsPhysicalMask() {
-    return 0xffffa08000000000ULL; 
+    return 0xffff9c0000000000ULL; 
 }
 
 const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
