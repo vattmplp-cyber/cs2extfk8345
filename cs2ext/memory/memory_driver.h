@@ -33,35 +33,7 @@ typedef struct _SYSTEM_BIGPOOL_INFORMATION {
 
 // Автоматичне динамічне визначення KASLR маски вашої Windows при кожному запуску
 unsigned long long GetWindowsPhysicalMask() {
-    typedef NTSTATUS(WINAPI* fnNtQuerySystemInformation)(int, PVOID, ULONG, PULONG);
-    auto pNtQuerySystemInformation = (fnNtQuerySystemInformation)GetProcAddress(
-        GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
-    
-    // Якщо API заблоковано, повертаємо останню відому робочу маску з вашої поточної сесії
-    if (!pNtQuerySystemInformation) return 0xffffa08000000000ULL; 
-
-    ULONG length = 0;
-    pNtQuerySystemInformation(SystemBigPoolInformation, nullptr, 0, &length);
-    
-    std::vector<uint8_t> buffer(length);
-    NTSTATUS status = pNtQuerySystemInformation(SystemBigPoolInformation, buffer.data(), length, &length);
-    
-    if (status == 0) { // STATUS_SUCCESS
-        auto pool_info = reinterpret_cast<PSYSTEM_BIGPOOL_INFORMATION>(buffer.data());
-        for (ULONG i = 0; i < pool_info->Count; i++) {
-            unsigned long long addr = reinterpret_cast<unsigned long long>(pool_info->AllocatedInfo[i].VirtualAddress);
-            
-            // Шукаємо діапазон адрес Direct Map Window у Windows 10
-            if (addr >= 0xffff800000000000ULL && addr <= 0xfffffa0000000000ULL) {
-                // Округлюємо до найближчого PML4 слоту ядра (крок 0x400 ГБ)
-                unsigned long long resolved_mask = addr & 0xffffff0000000000ULL;
-                if (resolved_mask != 0) {
-                    return resolved_mask; 
-                }
-            }
-        }
-    }
-    return 0xffffa08000000000ULL; // Якщо не знайшли, fallback на поточну сесію
+    return 0xffffa08000000000ULL; 
 }
 
 const wchar_t* SINGULARITY_GUID = L"{deadfade-0601-47C6-84E7-2EBC937D1B11}";
