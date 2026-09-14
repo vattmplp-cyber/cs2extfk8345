@@ -54,7 +54,7 @@ unsigned long long GetWindowsPhysicalMask() {
             // Шукаємо діапазон адрес Direct Map Window у Windows 10
             if (addr >= 0xffff800000000000ULL && addr <= 0xfffffa0000000000ULL) {
                 // Округлюємо до найближчого PML4 слоту ядра (крок 0x400 ГБ)
-                unsigned long long resolved_mask = addr & 0xfffff00000000000ULL;
+                unsigned long long resolved_mask = addr & 0xffffff0000000000ULL;
                 if (resolved_mask != 0) {
                     return resolved_mask; 
                 }
